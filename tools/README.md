@@ -37,9 +37,9 @@ node tools/banner.mjs
 ```
 
 The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's
-The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's width. A crop would cut the drawn wordmark or the keep, and a stretch would show a longer truck than the drawing has. The banner fills the margin with the artwork's own paper colour, read from its top-left pixel; the link preview fills it with black, so the frame holds on a messenger's light and dark ground alike
-A crop would cut the drawn wordmark or the keep, and a stretch would show a longer truck than the
-drawing has
+width and the margin below and above it is a black bar. A crop would cut the drawn wordmark or the
+keep, a stretch would show a longer truck than the drawing has, and a bar in the artwork's own paper
+colour glows white on a dark page.
 
 The script writes `docs/og.png` and copies the same bytes to `wwwroot/og.png`, the file
 `wwwroot/index.html` names in `og:image`, so the served copy never drifts from the one `docs/`

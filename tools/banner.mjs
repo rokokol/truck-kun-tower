@@ -21,14 +21,12 @@ const preview = join(root, 'docs/og.png');
 const servedPreview = join(root, 'wwwroot/og.png');
 
 // Both targets are wider than the artwork is, so the picture is fitted to the width and the rest of
-// the frame takes the artwork's own paper colour: a crop would cut the drawn wordmark on the left
-// or the keep on the right, and a stretch would show a longer truck than the drawing has.
+// the frame is a black bar: a crop would cut the drawn wordmark on the left or the keep on the
+// right, a stretch would show a longer truck than the drawing has, and a bar in the artwork's own
+// paper colour glows white on a dark page.
 const targets = [
-  // The banner sits on a light bot profile, so the artwork's own paper disappears into it
-  { out: banner, width: 640, height: 360, keep: 'the banner', bars: 'artwork' },
-  // A share card is shown on whatever ground the messenger uses, light or dark: black bars frame
-  // the picture on both instead of glowing white on the dark one
-  { out: preview, width: 1200, height: 630, keep: 'the link preview', bars: '#000000' },
+  { out: banner, width: 640, height: 360, keep: 'the banner' },
+  { out: preview, width: 1200, height: 630, keep: 'the link preview' },
 ];
 
 function fail(problem) {
@@ -53,13 +51,11 @@ function probe(file) {
 const source = probe(art);
 if (source.width < source.height) fail(`${art} is taller than wide, so a wide banner cannot be a crop of it`);
 
-const paper = execFileSync('magick', [art, '-format', '%[pixel:p{0,0}]', 'info:'], {encoding: 'utf8'}).trim();
-if (!/^s?rgb/.test(paper)) fail(`cannot read the artwork's paper colour, got ${paper}`);
+const bars = '#000000';
 
 for (const target of targets) {
   const fitted = Math.round(target.width * source.height / source.width);
   if (fitted > target.height) fail(`${target.keep} cannot hold the whole artwork at ${target.width} wide`);
-  const bars = target.bars === 'artwork' ? paper : target.bars;
   magick(art, '-filter', 'Lanczos', '-resize', `${target.width}x${fitted}`,
     '-background', bars, '-gravity', 'center', '-extent', `${target.width}x${target.height}`,
     '-strip', '-colors', '256', '-depth', '8', target.out);

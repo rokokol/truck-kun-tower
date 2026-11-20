@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Truck-kun Tower</title>
+  <link rel="stylesheet" href="vendor/ddlc/ddlc-ui.css">
+  <link rel="stylesheet" href="duel.css">
+</head>
+<body>
+  <main>
+    <header>
+      <a class="brand" href="/" aria-label="Truck-kun Tower — на главный экран">
+        <svg class="brand-mark" viewBox="0 0 58 46" aria-hidden="true"><use href="actors.svg#emblem"/></svg>
+        <span class="brand-word"><b>Truck<span>-kun</span></b><em>Tower</em></span>
+      </a>
+      <button id="sound" type="button" disabled>Звук недоступен</button>
+    </header>
+    <section id="cover" class="card">
+      <span class="ribbon">том 1</span>
+      <small class="kicker">Исекай · тактическая дуэль · Telegram Mini App</small>
+      <svg class="plate" viewBox="0 0 300 124" aria-hidden="true">
+        <path class="plate-road" d="M10 104H290"/>
+        <g class="plate-speed"><path d="M18 74h18M8 86h26M22 98h16"/></g>
+        <use href="actors.svg#truck" x="24" y="40" width="96" height="88"/>
+        <use href="actors.svg#keep" x="192" y="16" width="72" height="101"/>
+        <use href="actors.svg#giant" x="152" y="76" width="34" height="34"/>
+        <use href="actors.svg#swarm" x="136" y="90" width="19" height="19"/>
+        <use href="actors.svg#swarm" x="118" y="97" width="14" height="14"/>
+        <g class="plate-burst"><path d="m172 44 3 8 8 3-8 3-3 8-3-8-8-3 8-3z"/><path d="m188 66 2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></g>
+      </svg>
+      <h1>Меня сбил грузовик, и я переродился башней в мире слизней <em>и теперь мне нужно вести себя как телеграм-приложение, созданное ради выполнения домашки</em></h1>
+      <p>Пять волн на двоих. Укрепляй свою дорогу или отправляй слизней на чужую</p>
+      <button id="start">Создать дуэль</button>
+      <ul class="badges"><li>1 × 1</li><li>5 волн</li><li>со звуком</li></ul>
+    </section>
+    <section id="game" hidden>
+      <details id="invite">
+        <summary>Пригласить соперника</summary>
+        <input id="link" readonly aria-label="Ссылка для второго игрока">
+        <button id="copy">Скопировать ссылку</button>
+      </details>
+      <small>ПОЛЕВОЙ ДНЕВНИК / <span id="role"></span></small>
+      <h2 id="status" aria-live="polite"></h2>
+      <span class="pips" id="pips" aria-hidden="true"></span>
+      <div id="field" hidden>
+        <div class="stats">
+          <span class="chip">Крепость <svg class="icon heart" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#heart"/></svg><b id="hp"></b></span>
+          <span class="chip gold">Золото <svg class="coin" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#coin"/></svg><b id="budget"></b></span>
+        </div>
+        <div class="board-scroll">
+          <div id="board">
+            <svg id="map" aria-hidden="true"></svg>
+            <div id="cells" role="group" aria-label="Клетки поля"></div>
+          </div>
+        </div>
+        <p id="hint" aria-live="polite"></p>
+      </div>
+      <section id="planning" aria-label="Приказы на волну" hidden>
+        <small>ПРИКАЗЫ НА ВОЛНУ</small>
+        <div id="actions" role="group" aria-label="Тип приказа"></div>
+        <button id="commit" disabled></button>
+        <ul id="orders" aria-label="Группы на эту волну" hidden></ul>
+        <button id="ready" disabled>Готов к волне</button>
+      </section>
+      <a hidden id="again" href="/">Создать новую дуэль</a>
+    </section>
+    <p id="error" role="alert"></p>
+  </main>
+  <script src="signalr.min.js"></script>
+  <script src="sounds.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

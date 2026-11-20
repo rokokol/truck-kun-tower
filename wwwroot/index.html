@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Truck-kun Tower</title>
   <link rel="stylesheet" href="vendor/ddlc/ddlc-ui.css">
-  <link rel="stylesheet" href="duel.css?v=2">
+  <link rel="stylesheet" href="duel.css?v=3">
 </head>
 <body>
   <main>
@@ -16,25 +16,187 @@
       </a>
       <button id="sound" type="button" disabled>Звук недоступен</button>
     </header>
-    <section id="cover" class="card">
-      <span class="ribbon">том 1</span>
-      <small class="kicker">Исекай · тактическая дуэль · веб-приложение</small>
-      <svg class="plate" viewBox="0 0 300 124" aria-hidden="true">
-        <path class="plate-road" d="M10 104H290"/>
-        <g class="plate-speed"><path d="M18 74h18M8 86h26M22 98h16"/></g>
-        <use href="actors.svg#truck" x="24" y="40" width="96" height="88"/>
-        <use href="actors.svg#keep" x="192" y="16" width="72" height="101"/>
-        <use href="actors.svg#giant" x="152" y="76" width="34" height="34"/>
-        <use href="actors.svg#swarm" x="136" y="90" width="19" height="19"/>
-        <use href="actors.svg#swarm" x="118" y="97" width="14" height="14"/>
-        <g class="plate-burst"><path d="m172 44 3 8 8 3-8 3-3 8-3-8-8-3 8-3z"/><path d="m188 66 2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></g>
-      </svg>
-      <h1>Меня сбил грузовик, и я переродился башней в мире слизней <em>и теперь мне нужно вести себя как веб-приложение, созданное ради выполнения домашки</em></h1>
-      <p>Пять волн на двоих. Укрепляй свою дорогу или отправляй слизней на чужую</p>
-      <button id="start">Создать дуэль</button>
-      <ul class="badges"><li>1 × 1</li><li>5 волн</li><li>со звуком</li></ul>
-    </section>
+
+    <!-- The two paper screens. Alpine owns them, the board below belongs to game.js -->
+    <div id="app" x-data="tower" x-cloak x-show="screen === 'auth' || screen === 'lobby'">
+      <section id="auth" class="card" x-show="screen === 'auth'" aria-labelledby="authTitle">
+        <span class="ribbon">вход</span>
+        <svg class="plate" viewBox="0 0 300 124" aria-hidden="true">
+          <path class="plate-road" d="M10 104H290"/>
+          <g class="plate-speed"><path d="M18 74h18M8 86h26M22 98h16"/></g>
+          <use href="actors.svg#truck" x="24" y="40" width="96" height="88"/>
+          <use href="actors.svg#keep" x="192" y="16" width="72" height="101"/>
+          <use href="actors.svg#giant" x="152" y="76" width="34" height="34"/>
+          <use href="actors.svg#swarm" x="136" y="90" width="19" height="19"/>
+          <use href="actors.svg#swarm" x="118" y="97" width="14" height="14"/>
+          <g class="plate-burst"><path d="m172 44 3 8 8 3-8 3-3 8-3-8-8-3 8-3z"/><path d="m188 66 2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></g>
+        </svg>
+        <h1 id="authTitle">Меня сбил грузовик, и я переродился башней в мире слизней</h1>
+        <p class="lede">Пять волн на двоих. Укрепляй свою дорогу или отправляй слизней на чужую</p>
+        <small class="kicker">Исекай · тактическая дуэль · веб-приложение</small>
+
+        <div class="tabs" role="tablist" aria-label="Вход или регистрация">
+          <button type="button" role="tab" id="tabLogin" aria-controls="authForm"
+                  :aria-selected="mode === 'login'" :class="{ on: mode === 'login' }"
+                  @click="mode = 'login'; error = ''">Вход</button>
+          <button type="button" role="tab" id="tabRegister" aria-controls="authForm"
+                  :aria-selected="mode === 'register'" :class="{ on: mode === 'register' }"
+                  @click="mode = 'register'; error = ''">Регистрация</button>
+        </div>
+
+        <form id="authForm" class="fields" role="tabpanel"
+              :aria-labelledby="mode === 'login' ? 'tabLogin' : 'tabRegister'"
+              @submit.prevent="submitAuth()">
+          <label for="nick">Ник</label>
+          <input id="nick" name="nickname" x-model.trim="nickname" autocomplete="username"
+                 required minlength="3" maxlength="24" spellcheck="false"
+                 :aria-invalid="error ? 'true' : null" :aria-describedby="error ? 'authError' : null">
+          <label for="pass">Пароль</label>
+          <input id="pass" name="password" type="password" x-model="password"
+                 :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+                 required minlength="8" maxlength="72"
+                 :aria-describedby="error ? 'passRule authError' : 'passRule'"
+                 :aria-invalid="error ? 'true' : null">
+          <small id="passRule" class="rule">от 8 до 72 символов</small>
+          <button type="submit" class="wide" :disabled="busy"
+                  x-text="busy ? 'Секунду…' : mode === 'login' ? 'Войти' : 'Зарегистрироваться'"></button>
+        </form>
+        <p id="authError" class="form-error" role="alert" x-show="error" x-text="error"></p>
+
+        <p class="or"><span>или</span></p>
+
+        <button id="start" type="button" @click="playGuest()" :disabled="busy"
+                x-text="pendingRoom ? 'Вступить в дуэль' : 'Играть гостем'"></button>
+        <p class="fine" x-show="pendingRoom">
+          Ссылка ведёт в комнату <b x-text="pendingRoom"></b>. Аккаунт не обязателен.
+        </p>
+        <fieldset class="sides" x-show="pendingRoom">
+          <legend>Сторона</legend>
+          <label><input type="radio" name="guestSide" value="defender" x-model="side"> Защитник</label>
+          <label><input type="radio" name="guestSide" value="attacker" x-model="side"> Атакующий</label>
+        </fieldset>
+
+        <ul class="badges"><li>1 × 1</li><li>5 волн</li><li>со звуком</li></ul>
+      </section>
+
+      <section id="lobby" class="screen" x-show="screen === 'lobby'" aria-labelledby="lobbyTitle">
+        <h1 id="lobbyTitle" class="screen-title">Лобби</h1>
+
+        <div class="card profile">
+          <small class="cap">Профиль</small>
+          <p class="who"><b x-text="user ? user.nickname : ''"></b>
+            <span class="presence on" aria-hidden="true"></span></p>
+          <p class="fine">Аккаунт с <time :datetime="user ? user.createdAt : null" x-text="joinedLabel"></time></p>
+          <button type="button" @click="logout()">Выйти</button>
+        </div>
+
+        <p class="notice" role="status" x-show="note" x-text="note"></p>
+        <p class="form-error" role="alert" x-show="lobbyError" x-text="lobbyError"></p>
+
+        <div class="card">
+          <small class="cap">Друзья</small>
+          <form class="inline-form" @submit.prevent="addFriend()">
+            <label for="friendNick">Добавить в друзья по нику</label>
+            <div class="row">
+              <input id="friendNick" x-model.trim="friendNick" maxlength="24" spellcheck="false"
+                     autocomplete="off" placeholder="ник">
+              <button type="submit" :disabled="busy || !friendNick">Добавить</button>
+            </div>
+          </form>
+          <ul class="people" x-show="friends.length">
+            <template x-for="friend in friends" :key="friend.id">
+              <li class="person">
+                <span class="presence" :class="{ on: friend.online }"
+                      :title="friend.online ? 'в сети' : 'не в сети'"></span>
+                <b x-text="friend.nickname"></b>
+                <span class="row-actions">
+                  <button type="button" @click="inviteFriend(friend)" :disabled="busy">Пригласить в дуэль</button>
+                  <button type="button" class="ghost" @click="removeFriend(friend)">Удалить</button>
+                </span>
+              </li>
+            </template>
+          </ul>
+          <p class="empty" x-show="!friends.length">Пока никого. Добавь друга по нику — и приглашай его в дуэль.</p>
+        </div>
+
+        <div class="card" x-show="incoming.length || outgoing.length">
+          <small class="cap">Заявки в друзья</small>
+          <ul class="people">
+            <template x-for="row in incoming" :key="'in-' + row.id">
+              <li class="person">
+                <span x-text="row.from ? row.from.nickname : ''"></span>
+                <span class="row-actions">
+                  <button type="button" @click="answerRequest(row.id, true)">Принять</button>
+                  <button type="button" class="ghost" @click="answerRequest(row.id, false)">Отклонить</button>
+                </span>
+              </li>
+            </template>
+            <template x-for="row in outgoing" :key="'out-' + row.id">
+              <li class="person">
+                <span x-text="row.to ? row.to.nickname : ''"></span>
+                <span class="row-actions">
+                  <small class="tag">ждём ответа</small>
+                  <button type="button" class="ghost" @click="answerRequest(row.id, false)">Отменить</button>
+                </span>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <div class="card" x-show="invites.length">
+          <small class="cap">Приглашения в дуэль</small>
+          <ul class="people">
+            <template x-for="invite in invites" :key="invite.id">
+              <li class="person">
+                <span><b x-text="invite.from ? invite.from.nickname : ''"></b> зовёт в бой</span>
+                <span class="row-actions">
+                  <button type="button" @click="acceptInvite(invite)" :disabled="busy">Принять</button>
+                  <button type="button" class="ghost" @click="declineInvite(invite)">Отклонить</button>
+                </span>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <div class="card">
+          <small class="cap">Новая дуэль</small>
+          <fieldset class="sides">
+            <legend>Сторона</legend>
+            <label><input type="radio" name="side" value="defender" x-model="side"> Защитник</label>
+            <label><input type="radio" name="side" value="attacker" x-model="side"> Атакующий</label>
+          </fieldset>
+          <button type="button" class="wide" @click="createDuel()" :disabled="busy">Создать дуэль</button>
+          <p class="fine">После создания пришли другу ссылку-приглашение или нажми «Пригласить в дуэль» рядом с его ником.</p>
+        </div>
+
+        <div class="card" x-show="duels.length">
+          <small class="cap">Мои дуэли</small>
+          <ul class="people">
+            <template x-for="duel in duels" :key="duel.id">
+              <li class="duel">
+                <span class="duel-line">
+                  <b x-text="duel.opponent ? duel.opponent.nickname : 'свободное место'"></b>
+                  <small class="tag" x-text="statusOf(duel.status)"></small>
+                  <small class="tag" x-text="sideOf(duel.mySide)"></small>
+                </span>
+                <span class="row-actions">
+                  <button type="button" @click="continueDuel(duel)">Продолжить</button>
+                  <button type="button" class="ghost" @click="copyLink(duel.id)">Ссылка</button>
+                  <button type="button" class="ghost" @click="cancelDuel(duel)">Отменить</button>
+                </span>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <p class="fine foot">Одна вкладка — одно место в комнате. Ссылка-приглашение работает и для гостя.</p>
+      </section>
+    </div>
+
     <section id="game" hidden>
+      <div class="game-bar">
+        <button id="leave" type="button" class="ghost">К списку дуэлей</button>
+      </div>
       <details id="invite">
         <summary>Пригласить соперника</summary>
         <input id="link" readonly aria-label="Ссылка для второго игрока">
@@ -42,6 +204,7 @@
       </details>
       <small>ПОЛЕВОЙ ДНЕВНИК / <span id="role"></span></small>
       <h2 id="status" aria-live="polite"></h2>
+      <p id="rival" class="rival"></p>
       <span class="pips" id="pips" aria-hidden="true"></span>
       <small id="clock" class="clock" aria-live="off"></small>
       <div id="field" hidden>
@@ -49,10 +212,12 @@
           <span class="chip">Крепость <svg class="icon heart" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#heart"/></svg><b id="hp"></b></span>
           <span class="chip gold">Золото <svg class="coin" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#coin"/></svg><b id="budget"></b></span>
         </div>
-        <div class="board-scroll">
-          <div id="board">
-            <svg id="map" aria-hidden="true"></svg>
-            <div id="cells" role="group" aria-label="Клетки поля"></div>
+        <div class="board-frame">
+          <div class="board-scroll">
+            <div id="board">
+              <svg id="map" aria-hidden="true"></svg>
+              <div id="cells" role="group" aria-label="Клетки поля"></div>
+            </div>
           </div>
         </div>
         <p id="hint" aria-live="polite"></p>
@@ -63,15 +228,24 @@
         <button id="commit" disabled></button>
         <ul id="orders" aria-label="Группы на эту волну" hidden></ul>
         <button id="ready" disabled>Готов к волне</button>
-        <button id="swap" type="button" hidden>Поменяться сторонами</button>
       </section>
+      <button id="swap" type="button" hidden>Поменяться сторонами</button>
+      <p id="swapWait" class="swap-note" role="status" hidden>Ждём ответа соперника</p>
+      <div id="swapAsk" class="swap-ask" role="group" aria-label="Соперник предлагает поменяться сторонами" hidden>
+        <small>СОПЕРНИК ПРЕДЛАГАЕТ ПОМЕНЯТЬСЯ</small>
+        <button id="swapYes" type="button">Принять</button>
+        <button id="swapNo" type="button" class="ghost">Отклонить</button>
+      </div>
       <button id="rematch" type="button" hidden>Начать следующий раунд</button>
       <a hidden id="again" href="/">Создать новую дуэль</a>
     </section>
+
     <p id="error" role="alert"></p>
   </main>
+  <script defer src="vendor/alpine/alpine.min.js"></script>
   <script src="signalr.min.js"></script>
-  <script src="sounds.js?v=2"></script>
-  <script src="game.js?v=2"></script>
+  <script src="sounds.js?v=3"></script>
+  <script src="lobby.js?v=3"></script>
+  <script src="game.js?v=3"></script>
 </body>
 </html>

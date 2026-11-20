@@ -1,9 +1,8 @@
-using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 
 // Runs the thirty-second clock: a player who stops answering does not hold the wave
 internal sealed class WaveClock(
-    ConcurrentDictionary<string, Duel> rooms,
+    Rooms rooms,
     IHubContext<Bell> bell,
     IServiceScopeFactory scopes,
     ILogger<WaveClock> log) : BackgroundService {
@@ -16,7 +15,7 @@ internal sealed class WaveClock(
             } catch (OperationCanceledException) {
                 return;
             }
-            foreach (var (id, game) in rooms) {
+            foreach (var (id, game) in rooms.All) {
                 bool closed;
                 Duel.ResultWrite? finished;
                 lock (game) {
@@ -25,7 +24,7 @@ internal sealed class WaveClock(
                 }
                 if (!closed) continue;
                 if (finished is not null) await Storage.SaveAsync(scopes, log, id, finished);
-                await bell.Clients.Group(id).SendAsync("changed", stopping);
+                await bell.Clients.Group(Bell.RoomGroup(id)).SendAsync("changed", stopping);
             }
         }
     }

@@ -1,9 +1,10 @@
+// The board of one room. It owns #game and nothing else: the auth screen and the lobby
+// live in lobby.js, and the two scripts agree on the tower:screen event.
+
 const el = id => document.getElementById(id);
 const waves = 5;
 const tile = 40;
 const tickMs = 90;
-const ticketKey = id => `duel:${id}`;
-const currentKey = 'duel:current';
 const choices = {
   bolt: ['Арбалет', 'Сильный удар по одной цели'],
   pulse: ['Руна', 'Бьёт всех в радиусе'],
@@ -20,16 +21,20 @@ const choices = {
   frost: ['Мороз', 'Замедляет всех в радиусе'],
   spikes: ['Шипы', 'Ловушка на тропе, колет наступившего'],
 };
-let player, state, field, action, cell, replay, room;
-let hubConnection;
+
+// roomId is the whole identity of a game: the account travels in the bearer,
+// the guest half in the seat token, and both are asked of Tower on every call
+let roomId = null, seatToken = null;
+let state, field, action, cell, replay;
 let generation = 0;
-let seen = 0, sequence = 0, sending = false;
+let seen = 0, sequence = 0, sending = false, timer = null;
+
 const onRoad = type => type === 'fence' || type === 'spikes';
-const types = () => player.seat === 0
+const defending = () => state?.seat === 0;
+const types = () => defending()
   ? ['bolt', 'pulse', 'cannon', 'frost', 'spikes', 'fence']
   : ['swarm', 'giant', 'smart', 'runner', 'armored', 'decoy', 'ranged', 'apc'];
-const defending = () => player.seat === 0;
-const planning = () => state.joined && !state.done && !state.locked && !replay && !sending;
+const planning = () => Boolean(state?.joined && !state.done && !state.locked && !replay && !sending);
 const route = id => field.routes.get(id);
 const entry = id => `Вход ${field.entries.indexOf(id) + 1}`;
 const coords = id => [id % state.width, Math.floor(id / state.width)];
@@ -39,20 +44,8 @@ const sprite = (id, x, y, size) => `<use href="actors.svg#${id}" x="${x - size /
 const fare = cost => `<span class="gold">${Number(cost)} <svg class="coin" aria-hidden="true" viewBox="0 0 32 32">${sprite('coin', 16, 16, 32)}</svg><span class="gold-unit"> зол.</span></span>`;
 const polyline = (path, cls) => `<polyline class="${cls}" points="${path.map(id => point(id).join(',')).join(' ')}"/>`;
 
-async function post(path, data) {
-  const response = await fetch(path, {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const error = Error(({400: 'Этот приказ недоступен', 401: 'Ссылка входа устарела',
-      404: 'Комната не найдена', 409: 'Место занято или условия хода изменились'})[response.status] ||
-      `Запрос не прошёл: ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return response.json();
-}
-const endpoint = path => `/room/${encodeURIComponent(player.id)}/${path}`;
+const room = path => `/api/duels/${encodeURIComponent(roomId)}/${path}`;
+const call = (path, options = {}) => Tower.request(path, { ...options, seat: seatToken });
 const fail = error => { el('error').textContent = error.message; };
 
 function makeField() {
@@ -86,6 +79,8 @@ function makeField() {
   el('map').innerHTML = `<g id="map-road">${road}</g><g id="map-markers">${markers}</g>` +
     `<g id="map-route"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
     `<g id="map-towers"></g><g id="map-mobs"></g><g id="map-shots"></g><g id="map-hits"></g>`;
+  el('cells').replaceChildren();
+  // A swap rebuilds the buttons: the defender sees walls and the attacker sees gates
   for (const id of defending() ? [...walls, ...fenceCells] : entries) {
     const button = document.createElement('button');
     const [x, y] = coords(id);
@@ -95,7 +90,7 @@ function makeField() {
     button.dataset.kind = defending() ? (fenceSite ? 'fence' : 'wall') : 'entry';
     button.style.gridArea = `${y + 1} / ${x + 1}`;
     button.setAttribute('aria-label', defending() ? `${fenceSite ? 'Тропа' : 'Стена'}: столбец ${x + 1}, ряд ${y + 1}` : entry(id));
-    button.onclick = () => { cell = cell === id ? undefined : id; render(); };
+    button.onclick = () => { if (button.disabled) return; cell = cell === id ? undefined : id; render(); };
     el('cells').append(button);
   }
 }
@@ -195,7 +190,7 @@ const remaining = () => clock ? Math.max(0, clock.left - Math.floor((Date.now() 
 
 function paintClock() {
   const node = el('clock');
-  const show = state && state.joined && !state.done && !state.locked && !replay;
+  const show = Boolean(state && state.joined && !state.done && !state.locked && !replay);
   node.hidden = !show;
   if (!show) return;
   const left = remaining();
@@ -213,10 +208,17 @@ function render() {
     : !joined ? 'Ждём второго игрока'
     : locked ? 'Ты готов. Ждём соперника'
     : `Волна ${last + 1} из ${waves} · подготовка`;
+  el('rival').textContent = !joined ? 'Второй игрок ещё не подключился — пришли ссылку из блока ниже'
+    : state.opponent ? `Соперник: ${state.opponent}` : 'Соперник: гость без аккаунта';
   const round = replay?.snapshot.last ?? last;
   el('pips').innerHTML = Array.from({length: waves}, (_, i) => `<i class="${i < round ? 'done' : ''}${i === round && !done ? ' now' : ''}"></i>`).join('');
   paintClock();
-  el('swap').hidden = !(joined && !done && last === 0 && !locked && towers.length === 0 && state.fences.length === 0);
+  // A lone player may move to the other chair, so the button does not wait for the opponent
+  const swapFree = !done && state.swap == null && last === 0 &&
+    towers.length === 0 && state.fences.length === 0 && orders.length === 0 && !locked && !replay;
+  el('swap').hidden = !swapFree;
+  el('swapWait').hidden = !(state.swap === 'mine' && !replay);
+  el('swapAsk').hidden = !(state.swap === 'theirs' && !replay);
   el('rematch').hidden = !(joined && done);
   el('field').hidden = false;
   el('again').hidden = !done || !!replay;
@@ -304,36 +306,47 @@ function accept(next) {
   if (!Number.isInteger(next.width) || !Array.isArray(next.paths)) throw Error('Сервер не прислал поле дуэли');
   const previous = state;
   state = next;
-  if (Number.isInteger(next.seat) && next.seat !== player?.seat) {
-    player.seat = next.seat;
-    sessionStorage.setItem(`duel:${player.id}`, JSON.stringify(player));
+  // The side decides what a click may build, so the field and its buttons are rebuilt together:
+  // on the first state of a room and whenever the seat moves
+  const rebuilt = !field || next.seat !== previous?.seat;
+  if (rebuilt) {
+    makeField();
     buildActions();
   }
   clock = {left: Number.isFinite(next.secondsLeft) ? next.secondsLeft : 0, at: Date.now()};
-  if (!field) makeField();
   if (next.last !== previous?.last || next.locked) action = cell = undefined;
-  if (next.done) store.set(currentKey, null);
   play(previous);
   render();
 }
 
 async function refresh() {
-  if (sending) return;
   const id = ++sequence;
-  const next = await post(endpoint('state'), {key: player.key});
+  const next = await call(room('state'));
   if (id === sequence) accept(next);
 }
-const sync = () => refresh().catch(fail);
+
+function sync() {
+  if (!roomId) return;
+  refresh().catch(error => {
+    // A seat can be taken away or a room can die; anything else is a passing hiccup
+    if ([401, 403, 404].includes(error.status)) leave(error.message);
+    else fail(error);
+  });
+}
 
 async function move(type, target) {
+  if (sending || !state) return;
   const wave = state.last + 1;
   sending = true;
   ++sequence;
   el('error').textContent = '';
   render();
   try {
-    const next = await post(endpoint('move'), {key: player.key, wave, action: type, cell: target});
-    if (type !== 'ready') {
+    const next = await call(room('moves'), {
+      method: 'POST',
+      body: {wave, action: type, cell: target === undefined ? null : target},
+    });
+    if (type !== 'ready' && type !== 'rematch') {
       if (defending()) action = cell = undefined;
       sounds.play('coin');
     }
@@ -343,7 +356,24 @@ async function move(type, target) {
   } finally {
     sending = false;
     render();
-    await sync();
+    sync();
+  }
+}
+
+async function swap(command) {
+  if (sending || !state) return;
+  sending = true;
+  ++sequence;
+  el('error').textContent = '';
+  render();
+  try {
+    accept(await call(room(command), {method: 'POST'}));
+  } catch (error) {
+    fail(error);
+  } finally {
+    sending = false;
+    render();
+    sync();
   }
 }
 
@@ -358,6 +388,7 @@ function buildActions() {
     button.dataset.action = type;
     button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32">${sprite(type, 16, 16, 32)}</svg>${label} <b></b><span>${hint}</span>`;
     button.onclick = () => {
+      if (button.disabled) return;
       if (defending() && onRoad(action) !== onRoad(type)) cell = undefined;
       action = type;
       render();
@@ -367,117 +398,96 @@ function buildActions() {
   }
 }
 
-async function alive(player, allowDone = false) {
-  try {
-    const next = await post(`/room/${encodeURIComponent(player.id)}/state`, {key: player.key});
-    return allowDone || !next.done;
-  } catch (error) {
-    return error.status !== 401 && error.status !== 404;
-  }
+function paintInvite() {
+  el('link').value = Tower.linkFor(roomId);
 }
 
-// A ticket lives in the browser itself: no Telegram, no server-side session
-const store = {
-  async get(key) { try { return localStorage.getItem(key); } catch { return null; } },
-  async set(key, value) {
-    try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {}
-  },
-};
-
-async function paintInvite() {
-  const web = new URL(location.origin + location.pathname);
-  web.search = new URLSearchParams({room, join: '1'});
-  el('link').value = web.href;
-}
-
-async function enter(saved) {
-  const id = ++generation;
-  el('start').disabled = true;
-  el('error').textContent = '';
-  try {
-    let stored = saved;
-    const joining = Boolean(room);
-    if (!stored && room) {
-      try { stored = JSON.parse(await store.get(ticketKey(room))); } catch {}
-    }
-    player = stored ?? await post(joining ? `/room/${encodeURIComponent(room)}/join` : '/room', {});
-    const fresh = !stored && !joining;
-    room = player.id;
-    await store.set(ticketKey(room), JSON.stringify(player));
-    await store.set(currentKey, room);
-    const url = new URL(location.href);
-    url.search = new URLSearchParams({room});
-    history.replaceState(null, '', url);
-    buildActions();
-    el('game').hidden = false;
-    el('cover').hidden = true;
-    el('status').textContent = 'Загружаем поле';
-    try {
-      await refresh();
-    } catch (error) {
-      el('game').hidden = true;
-      el('cover').hidden = false;
-      throw error;
-    }
-    el('invite').open = fresh;
-    await paintInvite();
-    const hub = globalThis.signalR && new signalR.HubConnectionBuilder()
-      .withUrl('/bell').withAutomaticReconnect().build();
-    let watching = false;
-    setInterval(() => { if (id === generation && (!watching || hub?.state !== 'Connected' || !state)) sync(); }, 2000);
-    if (!hub) return true;
-    hubConnection = hub;
-    hub.on('changed', sync);
-    const watch = async () => {
-      watching = false;
-      await hub.invoke('Watch', player.id);
-      watching = true;
-      await sync();
-    };
-    hub.onreconnected(() => watch().catch(fail));
-    await hub.start();
-    await watch();
-    return true;
-  } catch (error) {
-    fail(error);
-    el('start').disabled = false;
-    return false;
-  }
-}
-
-function restart() {
-  ++generation;
-  ++sequence;
-  store.set(currentKey, null);
-  hubConnection?.stop().catch(() => {});
-  hubConnection = undefined;
-  player = state = field = action = cell = replay = undefined;
+// The board wipes its own screen so a stale maze never shows over a new room
+function wipe() {
+  state = field = action = cell = replay = undefined;
   seen = 0;
-  sending = false;
   clock = null;
-  room = null;
-  el('error').textContent = '';
-  el('start').disabled = false;
-  el('start').textContent = 'Создать дуэль';
-  el('again').hidden = true;
-  el('game').hidden = true;
-  el('cover').hidden = false;
+  el('map').innerHTML = '';
+  el('cells').replaceChildren();
   el('actions').replaceChildren();
   el('orders').replaceChildren();
-  el('cells').replaceChildren();
-  el('map').innerHTML = '';
+  el('orders').hidden = true;
+  el('pips').innerHTML = '';
   el('status').textContent = '';
+  el('rival').textContent = '';
+  el('role').textContent = '';
   el('clock').hidden = true;
-  const url = new URL(location.href);
-  url.search = '';
-  history.replaceState(null, '', url);
+  el('field').hidden = true;
+  el('planning').hidden = true;
+  el('swap').hidden = true;
+  el('swapWait').hidden = true;
+  el('swapAsk').hidden = true;
+  el('rematch').hidden = true;
+  el('again').hidden = true;
+  el('invite').open = false;
 }
 
-el('swap').onclick = () => { if (!el('swap').hidden) move('swap', 0); };
-el('rematch').onclick = () => { if (!el('rematch').hidden) move('rematch', 0); };
+async function open(detail = {}) {
+  const id = String(detail.roomId ?? '').trim();
+  if (!id) return;
+  const batch = ++generation;
+  ++sequence;
+  wipe();
+  sending = false;
+  roomId = id;
+  seatToken = detail.seatToken ?? Tower.seatOf(id) ?? null;
+  el('error').textContent = '';
+  el('leave').textContent = Tower.token ? 'К списку дуэлей' : 'На главную';
+  el('status').textContent = 'Загружаем поле';
+  el('game').hidden = false;
+  el('invite').open = false;
+  paintInvite();
+  history.replaceState(null, '', `?room=${encodeURIComponent(id)}`);
+  try {
+    await refresh();
+  } catch (error) {
+    // The lobby owns the message once the board is gone
+    if (batch === generation) leave(error.message);
+    return;
+  }
+  if (batch !== generation) return;
+  el('invite').open = !state.joined;
+  Tower.watchRoom(id, seatToken).catch(() => {});
+  if (!timer) timer = setInterval(tick, 2000);
+}
+
+function tick() {
+  if (!roomId) return;
+  paintClock();
+  // The socket carries every change; the poll is the fallback when it never came up
+  if (!Tower.connected()) sync();
+}
+
+function leave(message) {
+  if (!roomId) return;
+  ++generation;
+  ++sequence;
+  if (timer) clearInterval(timer);
+  timer = null;
+  roomId = null;
+  seatToken = null;
+  sending = false;
+  wipe();
+  el('game').hidden = true;
+  el('error').textContent = '';
+  el('link').value = '';
+  history.replaceState(null, '', location.pathname);
+  window.dispatchEvent(new CustomEvent('tower:screen', { detail: {screen: 'lobby', message: message || null} }));
+}
 
 el('commit').onclick = () => { if (!el('commit').disabled) move(action, cell); };
-el('ready').onclick = () => { if (!el('ready').disabled) move('ready', 0); };
+el('ready').onclick = () => { if (!el('ready').disabled) move('ready', null); };
+el('rematch').onclick = () => { if (!el('rematch').hidden) move('rematch', null); };
+el('swap').onclick = () => { if (!el('swap').hidden) swap('swap'); };
+el('swapYes').onclick = () => swap('swap/accept');
+el('swapNo').onclick = () => swap('swap/decline');
+el('leave').onclick = () => leave(null);
+el('again').addEventListener('click', event => { event.preventDefault(); leave(null); });
 el('copy').onclick = async () => {
   let copied = false;
   try {
@@ -487,34 +497,10 @@ el('copy').onclick = async () => {
   el('copy').textContent = copied ? 'Ссылка скопирована' : 'Выделите ссылку';
   setTimeout(() => { el('copy').textContent = 'Скопировать ссылку'; }, 2400);
 };
-el('start').onclick = () => enter();
-el('again').addEventListener('click', event => { event.preventDefault(); restart(); });
 
-async function boot() {
-  const query = new URLSearchParams(location.search);
-  room = query.get('room');
-  if (room) {
-    // An invite link opens the ticket this browser already holds for that room
-    try {
-      const stored = JSON.parse(await store.get(ticketKey(room)));
-      if (stored && await alive(stored, true)) {
-        if (await enter(stored)) return;
-        el('start').textContent = 'Продолжить дуэль';
-        return;
-      }
-    } catch {}
-    el('start').textContent = 'Вступить в дуэль';
-    return;
-  }
-  const current = await store.get(currentKey);
-  if (!current) return;
-  try {
-    const stored = JSON.parse(await store.get(ticketKey(current)));
-    if (stored && await alive(stored)) {
-      room = current;
-      if (await enter(stored)) return;
-      el('start').textContent = 'Продолжить дуэль';
-    }
-  } catch {}
-}
-boot();
+Tower.on('Changed', () => { if (roomId && !sending) sync(); });
+
+window.addEventListener('tower:screen', event => {
+  const detail = event.detail ?? {};
+  if (detail.screen === 'game') open(detail);
+});

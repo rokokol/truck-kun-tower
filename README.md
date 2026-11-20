@@ -12,9 +12,17 @@ A tower defence siege for two players in the browser. One player guards a keep a
 
 ## What it is
 
-Two people open one link and take opposite sides of the same maze. The defender spends gold on towers and fences. The attacker spends gold on slimes and chooses an entrance for every group
+Two people take opposite sides of the same maze. The defender spends gold on towers and fences. The attacker spends gold on slimes and chooses an entrance for every group
 
 The server generates the maze and resolves each wave. The browser replays the result, so the two screens stay in step
+
+## Accounts, friends and invitations
+
+- A player registers with a nickname and a password. The session is a JWT that lives in `localStorage` for a week
+- Friends are added by nickname and confirmed by the other side; the list shows who is online right now
+- A friend can be invited into a duel from the list. The invitation arrives live and stays in the database until it is answered
+- A chair belongs to an account, but a guest with the invite link still plays without registering: the server hands that browser a random seat token
+- Before the first wave either player may ask to switch sides; the other player agrees or refuses, and nothing is built yet
 
 ## How a match plays
 
@@ -32,65 +40,71 @@ The server generates the maze and resolves each wave. The browser replays the re
 ## Run it with Docker
 
 ```sh
-docker compose up --build
+cp .env.example .env
+# fill POSTGRES_PASSWORD and JWT_KEY (openssl rand -base64 48) in .env
+docker compose up -d --build
 ```
 
-The game then answers on <http://localhost:5184>, and the database lives in the `tower-data` volume, so a restart keeps the played matches
-
-To keep the database in a folder on the host instead, mount it and give the container user access
-
-```sh
-mkdir -p data && sudo chown 1654:1654 data
-docker compose down
-docker run --rm -p 5184:8080 -v "$PWD/data:/data" truck-kun-tower
-```
+The game then answers on <http://localhost:5184>. PostgreSQL keeps its data in the `tower-db` volume, so a restart keeps accounts, friends and the played matches
 
 Without compose
 
 ```sh
 docker build -t truck-kun-tower .
-docker run --rm -p 5184:8080 -v "$PWD/data:/data" truck-kun-tower
+docker run --rm -p 5184:8080 --network host \
+  -e ConnectionStrings__Default="Host=127.0.0.1;Port=5432;Database=tower;Username=tower;Password=..." \
+  -e Jwt__Key="..." truck-kun-tower
 ```
 
-Two people play on one address: the first opens it, presses "Создать дуэль" and sends the invite link to the second. The first tab defends, the second attacks, and both need the same host
+## The API
 
-## Public HTTPS
+The client talks to one REST service. Every answer is a DTO, errors are `ProblemDetails` with a Russian `detail`
 
-The live copy sits on a VPS whose port 443 belongs to a VPN, so the game is served on a non-standard port by choice rather than by accident
+| Group | Endpoints |
+| --- | --- |
+| Accounts | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `GET /api/users/{id}`, `PUT /api/users/me`, `DELETE /api/users/me` |
+| Friends | `GET /api/friends`, `GET /api/friends/requests`, `POST /api/friends/requests`, `POST /api/friends/requests/{id}/accept`, `DELETE /api/friends/requests/{id}`, `DELETE /api/friends/{userId}` |
+| Invitations | `GET /api/invites`, `POST /api/invites`, `POST /api/invites/{id}/accept`, `DELETE /api/invites/{id}` |
+| Duels | `POST /api/duels`, `GET /api/duels`, `GET /api/duels/{id}`, `POST /api/duels/{id}/join`, `POST /api/duels/{id}/swap`, `POST /api/duels/{id}/swap/accept`, `POST /api/duels/{id}/swap/decline`, `GET /api/duels/{id}/state`, `POST /api/duels/{id}/moves`, `DELETE /api/duels/{id}` |
+| History | `GET /api/matches`, `GET /api/matches/{id}`, `PATCH /api/matches/{id}`, `DELETE /api/matches/{id}`, `GET /api/stats`, `GET /api/leaderboard` |
 
-- An `A` record `tower` points at the VPS and Cloudflare proxies it, so the visitor sees `https://tower.rokokol.art` through Cloudflare's certificate
-- The game itself answers on `8443` with a Let's Encrypt certificate for `tower.rokokol.art`; certbot renews it through the `/.well-known/acme-challenge/` location in `deploy/vps/nginx.conf`
-- `nginx` on port `80` keeps the plain-HTTP path for a proxied zone, and both listeners hand the request to `127.0.0.1:5184`
-
-Nothing in the game depends on a messenger: a player is a browser tab with a ticket in `localStorage`, and the invite is a plain link
-
-## Run it for development
-
-With the .NET SDK alone, from this directory
-
-```sh
-dotnet run --urls http://localhost:5184
-```
+The live channel is SignalR at `/bell`: a room change, a friend request, an invitation, a side question and presence. A guest joins a room with the seat token, an account with its JWT
 
 ## Data
 
-Matches are kept in SQLite through Entity Framework Core. A running game lives in memory, and a finished match goes to the database with its waves
+Five entities carry the durable side of the game
 
-To look inside the volume
+| Entity | What it holds |
+| --- | --- |
+| `User` | Nickname, PBKDF2 hash, registration date |
+| `Friendship` | Two players and the state of their request |
+| `DuelInvite` | An invitation to a room, with its answer |
+| `Room` | A duel lobby: who sits on which side and how it ended |
+| `Match` | A finished match, with one `Wave` row per wave |
+
+A live board (maze, towers, timers) stays in memory; a room row says who was in it, so a restart marks it abandoned instead of pretending it is playable
 
 ```sh
-docker compose exec tower ls -l /data
+curl -s localhost:5184/api/stats
+curl -s "localhost:5184/api/matches?take=10"
+curl -s "localhost:5184/api/leaderboard?take=5"
 ```
 
-Two endpoints read the database with LINQ over the tables
+## Public HTTPS
 
-| Endpoint | Answer |
-| --- | --- |
-| `GET /stats` | Matches played, wins per side, average waves and hearts left, and damage per wave number |
-| `GET /matches?take=10` | The most recent finished matches |
+The live copy sits on a VPS whose port 443 belongs to a VPN, so the game is served through Cloudflare
+
+- An `A` record `tower` points at the VPS and Cloudflare proxies it, so the visitor sees `https://tower.rokokol.art` through Cloudflare's certificate
+- Cloudflare reaches the game over plain HTTP on port 80 where nginx passes it to `127.0.0.1:5184`; the zone stays in **Flexible** mode
+- The same vhost keeps an `8443` TLS listener with a Let's Encrypt certificate; certbot renews it through `/.well-known/acme-challenge/`
+
+## Run it for development
+
+With the .NET SDK alone, from this directory, with the database up
 
 ```sh
-curl -s localhost:5184/stats
+docker compose up -d db
+dotnet run --urls http://localhost:5184
 ```
 
 ## Checks
@@ -102,5 +116,11 @@ node check.mjs
 node balance.mjs
 ```
 
-- `check.mjs` holds the rules to their promises: a shared maze with a route from every gate, roles that cannot spend each other's gold, placement that refuses the road, a private attack queue, a fence that blocks until it breaks, and gold that rises
+- `check.mjs` walks the whole API: registration, friends, invitations, sides, the rules of the game, the history, the leaderboard
 - `balance.mjs` plays scripted strategies against each other and prints the win count per pairing
+- The unit tests mock the repositories and need no database
+
+```sh
+docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packages -w /src \
+  mcr.microsoft.com/dotnet/sdk:8.0 dotnet test tests/TruckKun.Tower.Tests -p:ArtifactsPath=/tmp/art
+```

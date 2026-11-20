@@ -4,15 +4,25 @@ using System.Security.Cryptography;
 public sealed class Duel {
     public const int Defender = 0, Attacker = 1;
     const int WaveCount = 5, ThinkTime = 60;
-    const int ReplayTickMs = 90, ReplayMaxMs = 12000, FightTickLimit = 2048;
-    const int CarrierSteps = 5, CarrierPassengers = 3;
-    const int FenceHealth = 12;
-    static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 8, Frost: 6, Spikes: 3,
-        Swarm: 4, Giant: 7, Runner: 3, Armored: 8, Decoy: 5, Ranged: 10, Apc: 12, Fence: 4);
-    readonly record struct PriceList(int Bolt, int Pulse, int Cannon, int Frost, int Spikes,
-        int Swarm, int Giant, int Runner, int Armored, int Decoy, int Ranged, int Apc, int Fence) {
+    const int ReplayTickMs = 270, ReplayMaxMs = 52000, FightTickLimit = 2048;
+    const int CarrierPassengers = 5, SpikeCharges = 5, SpikeDamage = 4;
+    const int PulseTargets = 3;
+    const int FenceHealth = 16, KeepHealth = 10;
+    const int RangedRadius = 2, RangedAmmo = 10, RangedCooldown = 4;
+    const int StructureShotDamage = 4, KeepShotDamage = 1;
+    static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 8, Frost: 6, Spikes: 3, Mine: 3,
+        Swarm: 4, Giant: 7, Runner: 3, Armored: 8, Ranged: 14, Apc: 12, Fence: 4);
+    readonly record struct PriceList(int Bolt, int Pulse, int Cannon, int Frost, int Spikes, int Mine,
+        int Swarm, int Giant, int Runner, int Armored, int Ranged, int Apc, int Fence) {
         public int Smart => 5;
     }
+
+    internal const string PurchaseLimitCode = "purchase_limit";
+    static readonly ImmutableDictionary<string, int> Limits = new Dictionary<string, int> {
+        ["bolt"] = 4, ["pulse"] = 3, ["cannon"] = 2, ["frost"] = 2, ["fence"] = 3,
+        ["swarm"] = 4, ["giant"] = 2, ["smart"] = 2, ["runner"] = 3, ["armored"] = 2,
+        ["ranged"] = 1, ["apc"] = 1
+    }.ToImmutableDictionary();
 
     // The ranged slime shoots buildings, so a tower now has health of its own
     sealed class Building(string type, int cell, int hp) {
@@ -22,13 +32,15 @@ public sealed class Duel {
         public int Max { get; } = hp;
     }
     readonly record struct Purchase(string Type, int Cell);
-    readonly record struct Mob(int X, int Y, string Kind, bool Frozen);
-    readonly record struct Fence(int Cell, int Hp);
+    readonly record struct Mob(int X, int Y, string Kind, bool Frozen, int Id, int Hp, int Max);
+    readonly record struct Fence(int Cell, int Hp, int Max);
     readonly record struct BuildingView(string Type, int Cell, int Hp, int Max);
     readonly record struct Target(int Cell, int X, int Y);
+    readonly record struct SiegeShot(int Cell, int X, int Y, int MobId);
+    readonly record struct SiegeTarget(int Cell, Building? Tower = null);
     readonly record struct Frame(int Hp, ImmutableArray<Mob> Mobs, ImmutableArray<Target> Shots,
         ImmutableArray<Target> Aims, ImmutableArray<Fence> Fences, ImmutableArray<BuildingView> Buildings,
-        ImmutableArray<Target> Siege);
+        ImmutableArray<SiegeShot> Siege);
 
     // A chair belongs to an account, or to a guest holding the random token from the join.
     // A sideshow of keys used to be the whole identity; now it is only the guest's half of it.
@@ -45,7 +57,7 @@ public sealed class Duel {
     readonly Dictionary<int, int> fences = [];
     readonly List<Purchase> orders = [];
     ImmutableArray<Frame> frames = [];
-    int hp = 24;
+    int hp = KeepHealth;
     int last;
 
     public sealed record WaveWrite(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled, int Groups);
@@ -137,7 +149,7 @@ public sealed class Duel {
 
     public object View(int seat, string? opponent = null) => new {
         joined = Joined, seat, side = Sides.Name(seat), last, done = Done, locked = ready[seat],
-        gold = gold[seat], hp,
+        gold = gold[seat], hp, maxHp = KeepHealth,
         matchId, deadline, secondsLeft = SecondsLeft, replayMs,
         replayLeftMs = replayMs == 0 ? 0 : (int)Math.Clamp((replayEndsAt - DateTime.UtcNow).TotalMilliseconds, 0, replayMs),
         swap = swapBy is null ? null : (swapBy == seat ? "mine" : "theirs"),
@@ -146,10 +158,11 @@ public sealed class Duel {
         paths = maze.Routes.Values.ToArray(),
         alternatePaths = maze.RouteOptions.Values.SelectMany(options => options.Skip(1)).ToArray(),
         fenceCells = maze.FenceCells,
+        trapCells = seat == Defender ? TrapCells() : [],
         fences = FenceSnapshot(),
         towers = buildingsNow(),
         orders = seat == Attacker ? orders.ToArray() : [],
-        prices = Prices, frames
+        prices = Prices, limits = Limits, frames
     };
 
     public IResult? Apply(int seat, Move move) {
@@ -167,8 +180,21 @@ public sealed class Duel {
             orders.RemoveAt(index);
             return null;
         }
+        // A structure bought this turn goes back the same way an order does: the gold returns with it
+        if (move.Action == "unbuild") {
+            if (seat != Defender || move.Cell is not int site) return Results.BadRequest();
+            if (towers.FirstOrDefault(t => t.Cell == site) is { } built) {
+                gold[Defender] += PriceOf(built.Type)!.Value;
+                towers.Remove(built);
+                return null;
+            }
+            if (fences.Remove(site, out _)) {
+                gold[Defender] += Prices.Fence;
+                return null;
+            }
+            return Results.Conflict();
+        }
         if (move.Action == "ready") {
-            if (seat == Attacker && orders.Count == 0) return Results.Conflict();
             ready[seat] = true;
             if (ready[Defender] && ready[Attacker]) Resolve();
             return null;
@@ -176,19 +202,20 @@ public sealed class Duel {
 
         int price = PriceOf(move.Action) ?? 0;
         bool fence = move.Action == "fence";
-        bool trap = move.Action == "spikes";
-        bool tower = move.Action is "bolt" or "pulse" or "cannon" or "frost" or "spikes";
+        bool trap = IsTrap(move.Action);
+        bool tower = trap || move.Action is "bolt" or "pulse" or "cannon" or "frost";
         if (price == 0 || (fence || tower) != (seat == Defender) || move.Cell is not int cell)
             return Results.BadRequest();
         // The spikes lie on the road, like a fence, instead of standing on a wall
         bool valid = fence || trap ? maze.CanFence(cell) : tower ? maze.CanBuild(cell) : maze.Routes.ContainsKey(cell);
         if (!valid) return Results.BadRequest();
-        // Two fences on one cell would be paid for and then thrown away as a duplicate key
-        if (price > gold[seat] || ((fence || trap) && fences.ContainsKey(cell)) ||
-            (tower && towers.Exists(t => t.Cell == cell)))
-            return Results.Conflict();
-        // One trap per road: two sets of spikes on the same path would stop the wave alone
-        if (trap && towers.Where(t => t.Type == "spikes").Any(t => SharesRoute(t.Cell, cell)))
+        if (Limits.TryGetValue(move.Action!, out int limit)) {
+            int count = fence ? fences.Count : tower ? towers.Count(t => t.Type == move.Action) :
+                orders.Count(o => o.Type == move.Action);
+            if (count >= limit) return TypedResults.Conflict(PurchaseLimitCode);
+        }
+        if (price > gold[seat] || (trap && !TrapCells().Contains(cell)) ||
+            (fence && fences.ContainsKey(cell)) || ((fence || tower) && towers.Exists(t => t.Cell == cell)))
             return Results.Conflict();
 
         gold[seat] -= price;
@@ -198,8 +225,14 @@ public sealed class Duel {
         return null;
     }
 
-    bool SharesRoute(int a, int b) => maze.RouteOptions.Values
-        .Any(options => options.Any(path => path.Contains(a) && path.Contains(b)));
+    static bool IsTrap(string? type) => type is "spikes" or "mine";
+
+    int[] TrapCells() {
+        var traps = towers.Where(t => IsTrap(t.Type)).Select(t => t.Cell).ToHashSet();
+        var blocked = maze.RouteOptions.Values.SelectMany(options => options)
+            .Where(path => path.Any(traps.Contains)).SelectMany(path => path).ToHashSet();
+        return maze.FenceCells.Where(c => !blocked.Contains(c) && !fences.ContainsKey(c)).ToArray();
+    }
 
     void Reset() {
         maze = new Maze();
@@ -212,7 +245,7 @@ public sealed class Duel {
         frames = [];
         log.Clear();
         swapBy = null;
-        hp = 24;
+        hp = KeepHealth;
         last = 0;
         result = null;
         matchId = Guid.NewGuid();
@@ -227,13 +260,13 @@ public sealed class Duel {
         "cannon" => Prices.Cannon,
         "frost" => Prices.Frost,
         "spikes" => Prices.Spikes,
+        "mine" => Prices.Mine,
         "fence" => Prices.Fence,
         "swarm" => Prices.Swarm,
         "smart" => Prices.Smart,
         "giant" => Prices.Giant,
         "runner" => Prices.Runner,
         "armored" => Prices.Armored,
-        "decoy" => Prices.Decoy,
         "ranged" => Prices.Ranged,
         "apc" => Prices.Apc,
         _ => null
@@ -265,7 +298,7 @@ public sealed class Duel {
             hp == 0 ? "Attacker" : "Defender", hp > 0, log.ToArray());
         else {
             int multiplier = 1 << (last - 1);
-            gold[Defender] += 3 * multiplier;
+            gold[Defender] += 4 * multiplier;
             gold[Attacker] += 6 * multiplier;
             deadline = replayEndsAt.AddSeconds(ThinkTime);
         }
@@ -276,25 +309,55 @@ public sealed class Duel {
         int nextStep;
         bool frozen;
         int lastFrozenAt = -1;
+        bool stoppedByFence;
+        int released;
+        Slime? previousPassenger;
+        bool leftRoute;
+        int shotsLeft = kind == "ranged" ? RangedAmmo : 0;
+        int nextShot;
+        SiegeTarget? siegeTarget;
+        int id;
+        readonly int maxHealth = health;
         public int Health = health;
+        int KeepCell => path[^1];
+
+        public void AssignId(int waveId) => id = waveId;
+        public Mob Snapshot() => new(X, Y, Kind, Frozen, id, Health, maxHealth);
         public string Kind { get; } = kind;
         public int Cell => path[index];
         public int Remaining => path.Length - 1 - index;
         public int X => path[index] % Maze.Width;
         public int Y => path[index] / Maze.Width;
-        public int Touch => Kind == "giant" ? 5 : 1;
-        public bool CanDeploy => Kind == "apc" && (index >= CarrierSteps || Remaining == 0);
+        public bool AtKeep => Kind != "apc" && Remaining == 0;
+        bool Unloading => Kind == "apc" && (stoppedByFence || index >= (7 * (path.Length - 1) + 9) / 10);
+        public bool Unloaded => released == CarrierPassengers;
 
-        public Slime[] Deploy(int tick, int health) {
-            var born = new Slime[CarrierPassengers];
-            for (int n = 0; n < born.Length; n++) {
-                born[n] = new Slime(path, "balaclava", health) { index = index };
-                born[n].Spawn(tick);
-            }
-            return born;
+        public int ReachKeep() {
+            leftRoute = true;
+            return Kind switch { "giant" => 4, "balaclava" => 2, _ => 1 };
         }
 
-        int BaseInterval => Kind switch { "runner" => 1, "giant" => 3, "armored" or "apc" => 4, _ => 2 };
+        public Slime? Release(int tick, int health) {
+            if (!Unloading || Unloaded || PassengerAt(index)) return null;
+            previousPassenger = new Slime(path, "balaclava", health) {
+                index = index,
+                previousPassenger = previousPassenger
+            };
+            previousPassenger.Spawn(tick);
+            released++;
+            return previousPassenger;
+        }
+
+        bool PassengerAt(int position) {
+            // A delay farther down the road can close the gap between passengers.
+            for (var older = previousPassenger; older is not null; older = older.previousPassenger)
+                if (older.Health > 0 && !older.leftRoute && older.index == position) return true;
+            return false;
+        }
+
+        int BaseInterval => Kind switch {
+            "runner" or "balaclava" => 1, "giant" or "ranged" => 3, "armored" or "apc" => 4, _ => 2
+        };
         int FenceHits => Kind is "giant" or "armored" ? 3 : 1;
 
         public void Spawn(int tick) => nextStep = tick + BaseInterval;
@@ -307,31 +370,77 @@ public sealed class Duel {
         public bool Frozen => frozen;
         public void Damage(int amount) => Health -= Kind == "armored" ? Math.Max(1, amount / 2) : amount;
 
-        public void Advance(int tick, Dictionary<int, int> fences) {
-            if (tick < nextStep || Remaining == 0) return;
+        int SiegeDistance(int cell) => Math.Max(Math.Abs(cell % Maze.Width - X), Math.Abs(cell / Maze.Width - Y));
+
+        public bool AimSiege(List<Building> towers, Dictionary<int, int> fences, int keepHp) {
+            if (shotsLeft == 0 || Health <= 0 || keepHp <= 0) return false;
+            if (siegeTarget is { } held && SiegeDistance(held.Cell) <= RangedRadius &&
+                (held.Tower is { } heldTower ? heldTower.Hp > 0 && towers.Contains(heldTower) :
+                    held.Cell == KeepCell || fences.ContainsKey(held.Cell))) return true;
+
+            siegeTarget = null;
+            int bestHp = int.MaxValue, bestDistance = int.MaxValue;
+            foreach (var tower in towers) Consider(new(tower.Cell, tower), tower.Hp);
+            foreach (var (cell, fenceHp) in fences) Consider(new(cell), fenceHp);
+            if (siegeTarget is null && SiegeDistance(KeepCell) <= RangedRadius)
+                siegeTarget = new(KeepCell);
+            return siegeTarget is not null;
+
+            void Consider(SiegeTarget candidate, int targetHp) {
+                int distance = SiegeDistance(candidate.Cell);
+                if (targetHp <= 0 || distance > RangedRadius || targetHp > bestHp ||
+                    (targetHp == bestHp && distance >= bestDistance)) return;
+                siegeTarget = candidate;
+                bestHp = targetHp;
+                bestDistance = distance;
+            }
+        }
+
+        public void FireSiege(int tick, List<Building> towers, Dictionary<int, int> fences, ref int keepHp,
+            ImmutableArray<SiegeShot>.Builder siege) {
+            if (tick < nextShot || !AimSiege(towers, fences, keepHp) || siegeTarget is not { } target) return;
+            nextShot = tick + RangedCooldown;
+            shotsLeft--;
+            if (target.Tower is { } tower) tower.Hp -= StructureShotDamage;
+            else if (target.Cell == KeepCell) keepHp = Math.Max(0, keepHp - KeepShotDamage);
+            else if (fences[target.Cell] <= StructureShotDamage) fences.Remove(target.Cell);
+            else fences[target.Cell] -= StructureShotDamage;
+            siege.Add(new(target.Cell, X, Y, id));
+        }
+
+        public bool Advance(int tick, Dictionary<int, int> fences) {
+            if (tick < nextStep || Remaining == 0 || Unloading) return false;
+            nextStep = tick + BaseInterval;
             // A frozen slime loses one whole step, which is what the ice on the board shows
             if (frozen) {
                 frozen = false;
-                nextStep = tick + BaseInterval;
-                return;
+                return false;
             }
-            nextStep = tick + BaseInterval;
+            if (PassengerAt(index + 1)) return false;
             int nextCell = path[index + 1];
             if (fences.TryGetValue(nextCell, out int health)) {
-                int left = health - FenceHits;
-                if (left > 0) fences[nextCell] = left;
-                else fences.Remove(nextCell);
-                return;
+                if (Kind == "apc") {
+                    fences.Remove(nextCell);
+                    stoppedByFence = true;
+                } else {
+                    int left = health - FenceHits;
+                    if (left > 0) fences[nextCell] = left;
+                    else fences.Remove(nextCell);
+                }
+                return false;
             }
             index++;
+            return true;
         }
     }
 
     static int TowerHealth(string type) => type switch {
-        "cannon" => 30,
-        "pulse" => 20,
-        "frost" => 18,
-        "spikes" => 14,
+        "bolt" => 28,
+        "cannon" => 34,
+        "pulse" => 24,
+        "frost" => 22,
+        "spikes" => SpikeCharges,
+        "mine" => 1,
         _ => 24
     };
 
@@ -339,15 +448,28 @@ public sealed class Duel {
         .Select(t => new BuildingView(t.Type, t.Cell, t.Hp, t.Max)).ToImmutableArray();
 
     static (int Damage, int Range, int Every, bool HitsAll) Stats(string type) => type switch {
-        "bolt" => (4, 9, 4, false),
+        "bolt" => (4, 9, 6, false),
         "pulse" => (1, 4, 3, true),
-        "cannon" => (9, 4, 8, false),
+        "cannon" => (9, 8, 8, false),
         "frost" => (0, 4, 2, true),
-        "spikes" => (2, 0, 2, true),
         _ => (0, 0, 1, false)
     };
 
-    ImmutableArray<Fence> FenceSnapshot() => fences.Select(f => new Fence(f.Key, f.Value)).ToImmutableArray();
+    static void TriggerTrap(Slime mob, Dictionary<int, Building> traps, ImmutableArray<Target>.Builder shots) {
+        if (!traps.TryGetValue(mob.Cell, out var trap) || trap.Hp <= 0) return;
+        if (trap.Type == "mine") {
+            mob.Health = 0;
+            trap.Hp = 0;
+        } else {
+            if (mob.Kind == "apc") return;
+            mob.Damage(SpikeDamage);
+            trap.Hp--;
+        }
+        shots.Add(new(trap.Cell, mob.X, mob.Y));
+    }
+
+    ImmutableArray<Fence> FenceSnapshot() => fences
+        .Select(f => new Fence(f.Key, f.Value, FenceHealth)).ToImmutableArray();
 
     (ImmutableArray<Frame> Frames, int Spawned, int Killed) Fight() {
         Dictionary<int, Queue<Slime>> pending = [];
@@ -358,7 +480,6 @@ public sealed class Duel {
                 "smart" => ("smart", 5),
                 "runner" => ("runner", 6),
                 "armored" => ("armored", 3),
-                "decoy" => ("decoy", 4),
                 "ranged" => ("ranged", 2),
                 "apc" => ("apc", 1),
                 _ => ("swarm", 5)
@@ -367,16 +488,14 @@ public sealed class Duel {
                 var options = maze.RouteOptions[order.Cell];
                 var path = kind switch {
                     "smart" => options.MinBy(option => option.Length)!,
-                    "decoy" => options.MaxBy(option => option.Length)!,
                     _ => options[Random.Shared.Next(options.Length)]
                 };
                 int health = kind switch {
                     "giant" => 26 + 2 * last,
                     "armored" => 6 + last,
                     "runner" => 1,
-                    "decoy" => 3,
                     "ranged" => 8 + last,
-                    "apc" => 30 + 2 * last,
+                    "apc" => 44 + 3 * last,
                     _ => 2 + last
                 };
                 queue.Enqueue(new(path, kind, health));
@@ -384,24 +503,33 @@ public sealed class Duel {
         }
 
         List<Slime> mobs = [];
+        var traps = towers.Where(t => IsTrap(t.Type)).ToDictionary(t => t.Cell);
         int spawned = 0, killed = 0;
+        void AddMob(Slime mob) {
+            mob.AssignId(++spawned);
+            mobs.Add(mob);
+        }
+
         var replay = ImmutableArray.CreateBuilder<Frame>();
         // Bound the replay allocation even if a new effect prevents a slime from moving.
         for (int tick = 0; tick < FightTickLimit && hp > 0 &&
              (pending.Values.Any(queue => queue.Count > 0) || mobs.Count > 0); tick++) {
-            foreach (var mob in mobs) mob.Advance(tick, fences);
+            var shots = ImmutableArray.CreateBuilder<Target>();
+            foreach (var mob in mobs)
+                if (!mob.AimSiege(towers, fences, hp) && mob.Advance(tick, fences))
+                    TriggerTrap(mob, traps, shots);
             foreach (var (gate, queue) in pending) {
-                if (queue.Count == 0 || mobs.Any(mob => mob.Cell == gate)) continue;
+                if (queue.Count == 0 || mobs.Any(mob => mob.Health > 0 && mob.Cell == gate)) continue;
                 var next = queue.Dequeue();
                 next.Spawn(tick);
-                mobs.Add(next);
-                spawned++;
+                TriggerTrap(next, traps, shots);
+                AddMob(next);
             }
 
-            var shots = ImmutableArray.CreateBuilder<Target>();
             var aims = ImmutableArray.CreateBuilder<Target>();
-            var siege = ImmutableArray.CreateBuilder<Target>();
+            var siege = ImmutableArray.CreateBuilder<SiegeShot>();
             foreach (var tower in towers) {
+                if (IsTrap(tower.Type)) continue;
                 var (damage, range, every, hitsAll) = Stats(tower.Type);
                 int x = tower.Cell % Maze.Width, y = tower.Cell / Maze.Width;
                 var inRange = mobs.Where(m => m.Health > 0 && InReach(m)).ToList();
@@ -413,45 +541,42 @@ public sealed class Duel {
                     foreach (var mob in inRange.Where(m => m.Slow()))
                         shots.Add(new(tower.Cell, mob.X, mob.Y));
                 } else if (hitsAll) {
-                    foreach (var mob in inRange) Strike(mob, damage);
+                    // The rune strikes the weakest few, not the whole crowd.
+                    var weakest = inRange.OrderBy(m => m.Health).ThenBy(m => m.Remaining)
+                        .Take(tower.Type == "pulse" ? PulseTargets : inRange.Count).ToList();
+                    foreach (var mob in weakest) Strike(mob, damage);
                 } else Strike(lead, damage);
 
+                // A hit lands at once in the simulation, so the shot names the slime's own cell: the
+                // board marks the target with a line, and no projectile has to chase a moving sprite
                 void Strike(Slime mob, int amount) {
                     mob.Damage(amount);
                     shots.Add(new(tower.Cell, mob.X, mob.Y));
                 }
 
-                // the spikes bite only the slime standing on them, the frost freezes a 3×3 square
                 bool InReach(Slime mob) => tower.Type switch {
-                    "spikes" => mob.Cell == tower.Cell,
                     "frost" => Math.Abs(mob.X - x) <= 1 && Math.Abs(mob.Y - y) <= 1,
                     _ => Square(mob.X - x) + Square(mob.Y - y) <= range
                 };
             }
 
-            // The ranged slime answers back: it picks the weakest building within three cells
-            if (tick % 4 == 0)
-                foreach (var gunner in mobs.Where(m => m.Kind == "ranged" && m.Health > 0)) {
-                    var mark = towers.Where(t => t.Hp > 0 && Math.Abs(t.Cell % Maze.Width - gunner.X) <= 3 &&
-                            Math.Abs(t.Cell / Maze.Width - gunner.Y) <= 3)
-                        .MinBy(t => t.Hp);
-                    if (mark is null) continue;
-                    mark.Hp -= 3;
-                    siege.Add(new(mark.Cell, gunner.X, gunner.Y));
-                }
-            towers.RemoveAll(t => t.Hp <= 0);
-
+            // Defense damage must resolve before a gunner can return fire.
+            foreach (var mob in mobs) mob.FireSiege(tick, towers, fences, ref hp, siege);
             killed += mobs.RemoveAll(m => m.Health <= 0);
-            // Tower damage comes first: a destroyed carrier cannot deploy its passengers.
-            var landed = mobs.Where(m => m.CanDeploy).SelectMany(m => m.Deploy(tick, 3 + last)).ToArray();
-            mobs.RemoveAll(m => m.CanDeploy);
-            mobs.AddRange(landed);
-            spawned += landed.Length;
+            // A destroyed carrier cannot release a passenger on this tick.
+            for (int i = 0, count = mobs.Count; i < count; i++) {
+                if (mobs[i].Release(tick, 3 + last) is not { } passenger) continue;
+                TriggerTrap(passenger, traps, shots);
+                AddMob(passenger);
+            }
+            killed += mobs.RemoveAll(m => m.Health <= 0);
+            towers.RemoveAll(t => t.Hp <= 0);
+            mobs.RemoveAll(m => m.Unloaded);
 
-            foreach (var mob in mobs.Where(m => m.Remaining == 0))
-                hp = Math.Max(0, hp - mob.Touch);
-            mobs.RemoveAll(m => m.Remaining == 0);
-            replay.Add(new(hp, mobs.Select(m => new Mob(m.X, m.Y, m.Kind, m.Frozen)).ToImmutableArray(),
+            foreach (var mob in mobs.Where(m => m.AtKeep))
+                hp = Math.Max(0, hp - mob.ReachKeep());
+            mobs.RemoveAll(m => m.AtKeep);
+            replay.Add(new(hp, mobs.Select(m => m.Snapshot()).ToImmutableArray(),
                 shots.ToImmutable(), aims.ToImmutable(), FenceSnapshot(), buildingsNow(), siege.ToImmutable()));
         }
 

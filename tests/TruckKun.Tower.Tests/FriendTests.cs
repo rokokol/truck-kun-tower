@@ -143,6 +143,7 @@ public sealed class FriendTests {
     [Fact]
     public async Task A_pending_request_is_stored_and_announced_to_the_addressee() {
         var h = new Harness();
+        h.User(Me, "Петя");
         var mate = h.User(Mate, "Маша");
         h.KnownByNickname("Маша", mate);
         Friendship? added = null;
@@ -159,7 +160,10 @@ public sealed class FriendTests {
         var sent = Assert.Single(h.Sent);
         Assert.Equal(Bell.UserGroup(Mate), sent.Group);
         Assert.Equal("FriendRequest", sent.Method);
-        Assert.Contains("Маша", h.Payload(0));
+        using var message = JsonDocument.Parse(h.Payload(0));
+        var from = message.RootElement.GetProperty("request").GetProperty("From");
+        Assert.Equal(Me, from.GetProperty("Id").GetGuid());
+        Assert.Equal("Петя", from.GetProperty("Nickname").GetString());
     }
 
     [Fact]
@@ -379,7 +383,12 @@ public sealed class FriendTests {
         var sent = Assert.Single(h.Sent);
         Assert.Equal(Bell.UserGroup(Mate), sent.Group);
         Assert.Equal("DuelInvite", sent.Method);
-        Assert.Contains("\"RoomId\":\"board\"", h.Payload(0));
+        using var message = JsonDocument.Parse(h.Payload(0));
+        var payload = message.RootElement.GetProperty("invite");
+        Assert.Equal(Board, payload.GetProperty("RoomId").GetString());
+        var from = payload.GetProperty("From");
+        Assert.Equal(Me, from.GetProperty("Id").GetGuid());
+        Assert.Equal("Петя", from.GetProperty("Nickname").GetString());
     }
 
     [Fact]

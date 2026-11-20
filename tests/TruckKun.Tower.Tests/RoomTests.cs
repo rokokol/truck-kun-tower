@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -120,6 +121,22 @@ public sealed class RoomTests {
     }
 
     [Fact]
+    public void A_short_replay_shows_each_tick_for_at_least_a_tenth_of_a_second() {
+        var game = new Duel();
+        Assert.True(game.TryTake(PlayerRef.Nobody, Duel.Defender, out _));
+        Assert.True(game.TryTake(PlayerRef.Nobody, Duel.Attacker, out _));
+        Buy(game);
+        Assert.Null(game.Apply(Duel.Defender, new Move(1, "ready", null)));
+        Assert.Null(game.Apply(Duel.Attacker, new Move(1, "ready", null)));
+
+        var view = JsonSerializer.SerializeToElement(game.View(Duel.Defender), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        int frames = view.GetProperty("frames").GetArrayLength();
+        Assert.True(frames > 0);
+        // A step holds the screen for a quarter of a second, so a wave reads as movement, not jumps
+        Assert.True(view.GetProperty("replayMs").GetInt32() >= frames * 250);
+    }
+
+    [Fact]
     public async Task A_refused_move_keeps_the_code_the_board_chose() {
         var stage = new Stage();
         var first = stage.Account("Защитник");
@@ -129,14 +146,14 @@ public sealed class RoomTests {
         var session = await stage.Service.CreateAsync(defender, Duel.Defender);
         await stage.Service.JoinAsync(attacker, session.Id, Duel.Attacker);
 
-        // A defender cannot buy slimes, and an attacker cannot lock a wave without an order
+        // A defender cannot buy slimes or make an order for a different wave.
         var wrong_role = await Assert.ThrowsAsync<AppError>(() =>
             stage.Service.MoveAsync(defender, session.Id, new Move(1, "swarm", 45)));
-        var empty_wave = await Assert.ThrowsAsync<AppError>(() =>
-            stage.Service.MoveAsync(attacker, session.Id, new Move(1, "ready", null)));
+        var wrong_wave = await Assert.ThrowsAsync<AppError>(() =>
+            stage.Service.MoveAsync(attacker, session.Id, new Move(2, "ready", null)));
 
         Assert.Equal(400, wrong_role.Status);
-        Assert.Equal(409, empty_wave.Status);
+        Assert.Equal(409, wrong_wave.Status);
         Assert.Equal("Этот ход недоступен", wrong_role.Message);
         // Nothing was spent: a refused move leaves the board where it was
         Assert.True(stage.Rooms.Get(session.Id)!.CanSwitch);

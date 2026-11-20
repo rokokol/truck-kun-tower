@@ -105,6 +105,50 @@ pass('sides change only when the opponent agrees');
 // ── the rules of the game, on a guest room ──────────────────────────────────
 {
   const host = await guestDuel('defender');
+  const id = host.id;
+  const A = guest(host);
+  const B = guest(await post(`/api/duels/${id}/join`, {side: 'attacker'}));
+  const before = await stateOf(id, A);
+  const passWave = await act(id, B, 1, 'ready', null);
+  assert.equal(passWave.locked, true);
+  assert.equal(passWave.last, 0);
+  const empty = await act(id, A, 1, 'ready', null);
+  assert.equal(empty.last, 1);
+  assert.equal(empty.hp, before.hp);
+  assert.equal(empty.frames.length, 0);
+  const site = empty.paths[0][1], blocked = empty.paths[0][2];
+  const mined = await act(id, A, 2, 'mine', site);
+  assert.ok(before.trapCells.includes(blocked));
+  assert.ok(!mined.trapCells.includes(blocked), 'another trap on that route is not offered');
+  await act(id, A, 2, 'spikes', blocked, false);
+  await call(`/api/duels/${id}`, {method: 'DELETE', expect: 204, ...A});
+  pass('either side can ready an empty wave, and trap sites exclude blocked routes');
+}
+{
+  const host = await guestDuel('defender');
+  const roomPath = `/api/duels/${host.id}`;
+  const id = host.id;
+  const A = guest(host), B = guest(await post(roomPath + '/join', {side: 'attacker'}));
+  await act(id, A, 1, 'ready', null);
+  await act(id, B, 1, 'ready', null);
+  let current = await stateOf(id, B);
+  const gate = current.paths[0][0];
+  const cap = current.limits?.runner;
+  assert.ok(Number.isInteger(cap) && cap >= 1);
+  for (let i = 0; i < cap; i++) current = await act(id, B, 2, 'runner', gate);
+  assert.ok(current.gold >= current.prices.runner, 'the caller can afford an additional group');
+  const error = await post(roomPath + '/moves', {wave: 2, action: 'runner', cell: gate}, {...B, expect: 409});
+  assert.equal(error.code, 'purchase_limit');
+  const refused = await stateOf(id, B);
+  assert.equal(refused.gold, current.gold);
+  assert.equal(refused.orders.length, cap);
+  await act(id, B, 2, 'cancel', 0);
+  assert.equal((await act(id, B, 2, 'runner', gate)).orders.length, cap);
+  await call(roomPath, {method: 'DELETE', expect: 204, ...A});
+  pass('purchase limits are enforced independently of gold and cancellation frees a place');
+}
+{
+  const host = await guestDuel('defender');
   const visitor = await post(`/api/duels/${host.id}/join`, { side: 'attacker' });
   assert.equal(visitor.side, 'attacker');
   const A = guest(host), B = guest(visitor), id = host.id;
@@ -128,7 +172,7 @@ pass('sides change only when the opponent agrees');
   await act(id, B, 1, 'bolt', wall, false);
   await act(id, A, 1, 'bolt', keep, false);
   await act(id, B, 1, 'swarm', keep, false);
-  await act(id, B, 1, 'ready', -1, false);
+  await act(id, B, 2, 'ready', -1, false);
   const tower = await act(id, A, 1, 'bolt', wall);
   assert.equal(tower.gold, s.gold - s.prices.bolt);
   assert.ok(tower.towers.some(t => t.cell === wall && t.type === 'bolt'));
@@ -248,15 +292,23 @@ pass('sides change only when the opponent agrees');
   assert.ok(deployment >= 20, 'the transport moves at most once per four ticks');
   const position = m => m.y * before.width + m.x;
   const visited = after.frames.slice(0, deployment).flatMap(f => f.mobs.filter(m => m.kind === 'apc')).map(position);
-  const troops = after.frames[deployment].mobs.filter(m => m.kind === 'balaclava');
-  assert.equal(troops.length, 3);
-  const prefix = [...new Set([...visited, position(troops[0])])];
-  assert.equal(prefix.length, 6, 'the transport moves five cells from the gate');
-  assert.ok([...before.paths, ...before.alternatePaths].some(path => prefix.every((cell, i) => path[i] === cell)));
-  assert.ok(after.frames.slice(deployment).every(f => f.mobs.every(m => m.kind !== 'apc')));
-  assert.equal(after.hp, before.hp - 3);
-  assert.ok(Date.parse(after.deadline) - Date.now() >= 59000 + after.replayLeftMs, 'the replay does not use planning time');
-  pass('one minute to plan and a transport that deploys three passengers, then disappears');
+  const firstPassenger = after.frames[deployment].mobs.find(m => m.kind === 'balaclava');
+  const prefix = [...new Set([...visited, position(firstPassenger)])];
+  assert.ok([...before.paths, ...before.alternatePaths].some(path =>
+    prefix.length === 1 + Math.ceil(0.7 * (path.length - 1)) && prefix.every((cell, i) => path[i] === cell)),
+    'the carrier stops after 70% of its path');
+  const released = new Map();
+  for (const [tick, frame] of after.frames.entries()) {
+    const troops = frame.mobs.filter(m => m.kind === 'balaclava');
+    assert.equal(new Set(troops.map(position)).size, troops.length);
+    for (const mob of troops) if (!released.has(mob.id)) released.set(mob.id, tick);
+  }
+  assert.equal(released.size, 5, 'the transport carries five');
+  assert.equal(new Set(released.values()).size, 5, 'passengers leave on separate ticks');
+  assert.ok(after.frames.slice(Math.max(...released.values())).every(f => f.mobs.every(m => m.kind !== 'apc')));
+  assert.equal(after.hp, before.hp - 10, 'each of the five hits for two hearts');
+  assert.equal(after.done, true, 'ten hearts fall to one loaded transport');
+  pass('a transport of five unloads one by one and takes a ten-heart keep at once');
 }
 {
   const host = await guestDuel();
@@ -275,7 +327,9 @@ pass('sides change only when the opponent agrees');
   const after = await act(id, guest(raid), 1, 'ready');
   assert.ok(after.frames.some(f => f.mobs.some(m => m.frozen)), 'the frost tower applies its effect');
   assert.equal(after.hp, before.hp - 5, 'each slime thaws and reaches the keep');
-  pass('frost slows slimes without stopping the simulation');
+  assert.ok(Date.parse(after.deadline) - Date.now() >= 59000 + after.replayLeftMs,
+    'the replay does not use planning time');
+  pass('frost slows slimes without stopping the simulation, and the replay leaves a full minute');
 }
 
 // ── income, the end of a match and the rematch ─────────────────────────────
@@ -287,7 +341,8 @@ let end, defenderView;
   let previousIncome;
   for (let wave = 1; wave <= 5 && !end.done; wave++) {
     const before = end.hp;
-    const purchased = await act(id, A, wave, 'swarm', end.paths[0][0]);
+    let purchased = await act(id, A, wave, 'swarm', end.paths[0][0]);
+    if (wave === 1) purchased = await act(id, A, wave, 'swarm', end.paths[1][0]);
     await act(id, B, wave, 'ready', -1);
     end = await act(id, A, wave, 'ready', -1);
     const nextDefender = await stateOf(id, B);

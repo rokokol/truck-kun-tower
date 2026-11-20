@@ -212,10 +212,12 @@ public sealed class RoomService(
     }
 
     // The board answers a refused move with an HTTP result; the endpoint should not know that
-    static AppError Refusal(IResult refused) =>
-        refused is IStatusCodeHttpResult { StatusCode: StatusCodes.Status409Conflict }
-            ? AppError.Conflict("Этот ход недоступен")
-            : AppError.BadRequest("Этот ход недоступен");
+    static AppError Refusal(IResult refused) => refused switch {
+        IValueHttpResult { Value: Duel.PurchaseLimitCode } =>
+            AppError.Conflict("Достигнут лимит покупок этого типа", Duel.PurchaseLimitCode),
+        IStatusCodeHttpResult { StatusCode: StatusCodes.Status409Conflict } => AppError.Conflict("Этот ход недоступен"),
+        _ => AppError.BadRequest("Этот ход недоступен")
+    };
 
     static Guid? RivalOf(Room row, Guid me) => row.DefenderId == me ? row.AttackerId : row.DefenderId;
 

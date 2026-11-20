@@ -48,9 +48,12 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 
 ## Deploy
 
-- `deploy/vps/` carries the production compose and the nginx site for `tower.rokokol.art`; port 443 on that host belongs to the VPN, so the site listens on 80 and Cloudflare terminates visitor TLS with the zone in Flexible mode
-- The game container runs with `network_mode: host` and binds `127.0.0.1:5184`; PostgreSQL publishes only `127.0.0.1:5432` and keeps its data in the `tower-db` volume
+- The host runs no .NET SDK, so the image is built here and carried over: `docker build --network=host -t truck-kun-tower .`, then `docker save truck-kun-tower | zstd -3 | ssh <host> 'zstd -d | docker load'`, then `cd /opt/truck-kun-tower && docker compose up -d`
+- `rsync -a --exclude .git --exclude bin --exclude obj --exclude .env ./ <host>:/opt/truck-kun-tower/` keeps the sources and the compose file there in step with the repository; the server itself never builds
+- One `docker-compose.yml` serves both machines: host networking, the game on `127.0.0.1:5184`, PostgreSQL in the `tower-db` volume. Only the command differs — `up -d --no-build` here after a build, a plain `up -d` there on the image just loaded
+- `deploy/vps/nginx.conf` is the site for `tower.rokokol.art`; port 443 on that host belongs to the VPN, so the site listens on 80 and Cloudflare terminates visitor TLS with the zone in Flexible mode
 - The production `.env` holds `POSTGRES_PASSWORD` and `JWT_KEY`; it never reaches git
+- The pre-PostgreSQL history stays untouched in the `vps_tower-data` volume; the game no longer reads it
 
 ## Assets
 

@@ -25,6 +25,21 @@ internal sealed class Duel {
     int hp = 24;
     int last;
 
+    public sealed record WaveWrite(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled, int Groups);
+    public sealed record ResultWrite(Guid Id, DateTime StartedAt, DateTime FinishedAt, int WavesPlayed,
+        int HeartsLeft, string Winner, bool Survivor, WaveWrite[] Log);
+
+    readonly Guid matchId = Guid.NewGuid();
+    readonly DateTime startedAt = DateTime.UtcNow;
+    readonly List<WaveWrite> log = [];
+    ResultWrite? result;
+
+    public ResultWrite? TakeResult() {
+        var finished = result;
+        result = null;
+        return finished;
+    }
+
     public bool Joined { get; private set; }
     bool Done => last >= WaveCount || hp == 0;
     public string Key(int seat) => keys[seat];
@@ -82,10 +97,15 @@ internal sealed class Duel {
 
     void Resolve() {
         last++;
-        frames = Fight();
+        int before = hp, groups = orders.Count;
+        var (replay, spawned, reached) = Fight();
+        frames = replay;
+        log.Add(new WaveWrite(last, hp, before - hp, spawned, spawned - reached, groups));
         orders.Clear();
         Array.Clear(ready);
-        if (!Done) {
+        if (Done) result = new ResultWrite(matchId, startedAt, DateTime.UtcNow, last, hp,
+            hp == 0 ? "Attacker" : "Defender", hp > 0, log.ToArray());
+        else {
             int multiplier = 1 << (last - 1);
             gold[Defender] += 3 * multiplier;
             gold[Attacker] += 6 * multiplier;
@@ -121,7 +141,7 @@ internal sealed class Duel {
 
     ImmutableArray<Fence> FenceSnapshot() => fences.Select(f => new Fence(f.Key, f.Value)).ToImmutableArray();
 
-    ImmutableArray<Frame> Fight() {
+    (ImmutableArray<Frame> Frames, int Spawned, int Reached) Fight() {
         Dictionary<int, Queue<Slime>> pending = [];
         foreach (var order in orders) {
             bool smart = order.Type == "smart", giant = order.Type == "giant";
@@ -134,6 +154,7 @@ internal sealed class Duel {
         }
 
         List<Slime> mobs = [];
+        int spawned = 0, reached = 0;
         var replay = ImmutableArray.CreateBuilder<Frame>();
         for (int tick = 0; hp > 0 && (pending.Values.Any(queue => queue.Count > 0) || mobs.Count > 0); tick++) {
             foreach (var mob in mobs) mob.Advance(tick, fences);
@@ -142,6 +163,7 @@ internal sealed class Duel {
                 var next = queue.Dequeue();
                 next.Spawn(tick);
                 mobs.Add(next);
+                spawned++;
             }
 
             var shots = ImmutableArray.CreateBuilder<Target>();
@@ -164,13 +186,16 @@ internal sealed class Duel {
             }
 
             foreach (var mob in mobs)
-                if (mob.Health > 0 && mob.Remaining == 0) hp = Math.Max(0, hp - (mob.Giant ? 5 : 1));
+                if (mob.Health > 0 && mob.Remaining == 0) {
+                    hp = Math.Max(0, hp - (mob.Giant ? 5 : 1));
+                    reached++;
+                }
             mobs.RemoveAll(m => m.Health <= 0 || m.Remaining == 0);
             replay.Add(new(hp, mobs.Select(m => new Mob(m.X, m.Y, m.Giant, m.Smart)).ToImmutableArray(),
                 shots.ToImmutable(), aims.ToImmutable(), FenceSnapshot()));
         }
 
-        return replay.ToImmutable();
+        return (replay.ToImmutable(), spawned, reached);
     }
 
     static int Square(int x) => x * x;

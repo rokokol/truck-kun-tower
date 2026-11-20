@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 const base = process.env.URL || 'http://localhost:5184';
+const page = await (await fetch(base + '/')).text();
+assert.match(page, /telegram-web-app\.js/, 'The page loads the Telegram bridge');
+assert.match(page, /viewport-fit=cover/, 'The page respects the phone safe area');
+const config = await (await fetch(base + '/config')).json();
+assert.ok('telegram' in config, 'The server names the Telegram app');
 async function post(path, data={}, ok=true) {
   const r = await fetch(base+path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
   assert.equal(r.ok, ok, `${path} ${JSON.stringify(data)}: ${r.status}`);

@@ -1,9 +1,9 @@
 const el = id => document.getElementById(id);
-const params = new URLSearchParams(location.search);
-const room = params.get('room') || params.get('tgWebAppStartParam');
 const waves = 5;
 const tile = 40;
 const tickMs = 90;
+const ticketKey = id => `duel:${id}`;
+const currentKey = 'duel:current';
 const choices = {
   bolt: ['Арбалет', 'Сильный удар по одной цели'],
   pulse: ['Руна', 'Бьёт всех в радиусе'],
@@ -20,7 +20,9 @@ const choices = {
   frost: ['Мороз', 'Замедляет всех в радиусе'],
   spikes: ['Шипы', 'Ловушка на тропе, колет наступившего'],
 };
-let player, state, field, action, cell, replay;
+let player, state, field, action, cell, replay, room;
+let settings, hubConnection;
+let generation = 0;
 let seen = 0, sequence = 0, sending = false;
 const onRoad = type => type === 'fence' || type === 'spikes';
 const types = () => player.seat === 0
@@ -41,8 +43,13 @@ async function post(path, data) {
   const response = await fetch(path, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data),
   });
-  if (!response.ok) throw Error(({400: 'Этот приказ недоступен', 401: 'Ссылка входа устарела',
-    404: 'Комната не найдена', 409: 'Место занято или условия хода изменились'})[response.status] || `Запрос не прошёл: ${response.status}`);
+  if (!response.ok) {
+    const error = Error(({400: 'Этот приказ недоступен', 401: 'Ссылка входа устарела',
+      404: 'Комната не найдена', 409: 'Место занято или условия хода изменились'})[response.status] ||
+      `Запрос не прошёл: ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 const endpoint = path => `/room/${encodeURIComponent(player.id)}/${path}`;
@@ -255,6 +262,7 @@ function render() {
 function play(previous) {
   if (replay || state.last <= seen || !state.frames.length) return;
   const snapshot = state;
+  const batch = generation;
   const {frames} = snapshot;
   seen = snapshot.last;
   replay = {snapshot, gold: previous?.gold ?? snapshot.gold};
@@ -263,6 +271,7 @@ function play(previous) {
   let damage = 0, hitUntil = 0;
   const pulseCells = new Set(snapshot.towers.filter(t => t.type === 'pulse').map(t => t.cell));
   function step() {
+    if (batch !== generation) return;
     const frame = frames[index];
     const before = frames[index - 1];
     if (frame.mobs.length > (before?.mobs.length ?? 0)) sounds.play('slime', .34);
@@ -278,6 +287,7 @@ function play(previous) {
     drawBattle(frame, damage);
     if (++index < frames.length) setTimeout(step, tickMs);
     else setTimeout(() => {
+      if (batch !== generation) return;
       replay = undefined;
       play(snapshot);
       if (!replay) {
@@ -301,6 +311,10 @@ function accept(next) {
   clock = {left: Number.isFinite(next.secondsLeft) ? next.secondsLeft : 0, at: Date.now()};
   if (!field) makeField();
   if (next.last !== previous?.last || next.locked) action = cell = undefined;
+  if (next.done) {
+    telegram.confirmClose(false);
+    telegram.set(currentKey, null);
+  }
   play(previous);
   render();
 }
@@ -324,6 +338,7 @@ async function move(type, target) {
     if (type !== 'ready') {
       if (defending()) action = cell = undefined;
       sounds.play('coin');
+      telegram.impact('light');
     }
     accept(next);
   } catch (error) {
@@ -355,29 +370,71 @@ function buildActions() {
   }
 }
 
-async function enter() {
+async function alive(player, allowDone = false) {
+  try {
+    const next = await post(`/room/${encodeURIComponent(player.id)}/state`, {key: player.key});
+    return allowDone || !next.done;
+  } catch (error) {
+    return error.status !== 401 && error.status !== 404;
+  }
+}
+
+async function loadConfig() {
+  if (!settings) settings = fetch('/config').then(response => response.ok ? response.json() : null).catch(() => null);
+  return settings;
+}
+
+async function paintInvite() {
+  const web = new URL(location.origin + location.pathname);
+  web.search = new URLSearchParams({room, join: '1'});
+  let link = web.href;
+  if (telegram.live) {
+    const bot = (await loadConfig())?.telegram;
+    link = telegram.buildInvite(bot?.inviteBase, room) || link;
+    el('share').hidden = false;
+  }
+  el('link').value = link;
+}
+
+async function enter(saved) {
+  const id = ++generation;
   el('start').disabled = true;
   el('error').textContent = '';
   try {
-    const stored = room && !params.has('join') && sessionStorage.getItem(`duel:${room}`);
-    player = stored ? JSON.parse(stored) : await post(room ? `/room/${encodeURIComponent(room)}/join` : '/room', {});
-    sessionStorage.setItem(`duel:${player.id}`, JSON.stringify(player));
+    let stored = saved;
+    const joining = Boolean(room);
+    if (!stored && room) {
+      try { stored = JSON.parse(await telegram.get(ticketKey(room))); } catch {}
+    }
+    player = stored ?? await post(joining ? `/room/${encodeURIComponent(room)}/join` : '/room', {});
+    const fresh = !stored && !joining;
+    room = player.id;
+    await telegram.set(ticketKey(room), JSON.stringify(player));
+    await telegram.set(currentKey, room);
+    telegram.confirmClose(true);
     const url = new URL(location.href);
-    url.search = new URLSearchParams({room: player.id});
+    url.search = new URLSearchParams({room});
     history.replaceState(null, '', url);
-    url.searchParams.set('join', '1');
-    el('link').value = url.href;
-    el('invite').open = !room;
     buildActions();
     el('game').hidden = false;
     el('cover').hidden = true;
     el('status').textContent = 'Загружаем поле';
-    await sync();
+    try {
+      await refresh();
+    } catch (error) {
+      el('game').hidden = true;
+      el('cover').hidden = false;
+      telegram.confirmClose(false);
+      throw error;
+    }
+    el('invite').open = fresh;
+    await paintInvite();
     const hub = globalThis.signalR && new signalR.HubConnectionBuilder()
       .withUrl('/bell').withAutomaticReconnect().build();
     let watching = false;
-    setInterval(() => { if (!watching || hub?.state !== 'Connected' || !state) sync(); }, 2000);
-    if (!hub) return;
+    setInterval(() => { if (id === generation && (!watching || hub?.state !== 'Connected' || !state)) sync(); }, 2000);
+    if (!hub) return true;
+    hubConnection = hub;
     hub.on('changed', sync);
     const watch = async () => {
       watching = false;
@@ -388,24 +445,90 @@ async function enter() {
     hub.onreconnected(() => watch().catch(fail));
     await hub.start();
     await watch();
+    return true;
   } catch (error) {
     fail(error);
     el('start').disabled = false;
+    return false;
   }
+}
+
+function restart() {
+  ++generation;
+  ++sequence;
+  telegram.set(currentKey, null);
+  hubConnection?.stop().catch(() => {});
+  hubConnection = undefined;
+  player = state = field = action = cell = replay = undefined;
+  seen = 0;
+  sending = false;
+  clock = null;
+  room = null;
+  el('error').textContent = '';
+  el('start').disabled = false;
+  el('start').textContent = 'Создать дуэль';
+  el('again').hidden = true;
+  el('game').hidden = true;
+  el('cover').hidden = false;
+  el('actions').replaceChildren();
+  el('orders').replaceChildren();
+  el('cells').replaceChildren();
+  el('map').innerHTML = '';
+  el('status').textContent = '';
+  el('clock').hidden = true;
+  telegram.confirmClose(false);
+  const url = new URL(location.href);
+  url.search = '';
+  history.replaceState(null, '', url);
 }
 
 el('swap').onclick = () => { if (!el('swap').hidden) move('swap', 0); };
 el('rematch').onclick = () => { if (!el('rematch').hidden) move('rematch', 0); };
+
 el('commit').onclick = () => { if (!el('commit').disabled) move(action, cell); };
-el('ready').onclick = () => { if (!el('ready').disabled) move('ready', 0); };
+el('ready').onclick = () => { if (!el('ready').disabled) { telegram.impact('medium'); move('ready', 0); } };
 el('copy').onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(el('link').value);
-    el('copy').textContent = 'Ссылка скопирована';
-  } catch { el('link').select(); }
+  const copied = await telegram.copy(el('link').value);
+  if (!copied) el('link').select();
+  el('copy').textContent = copied ? 'Ссылка скопирована' : 'Выделите ссылку';
+  setTimeout(() => { el('copy').textContent = 'Скопировать ссылку'; }, 2400);
 };
-el('start').onclick = enter;
-if (room) {
-  el('start').textContent = 'Вступить в дуэль';
-  if (!params.has('join') && sessionStorage.getItem(`duel:${room}`)) enter();
+el('share').onclick = () => {
+  if (!telegram.share(el('link').value,
+    'Дуэль в Truck-kun Tower: я держу крепость, ты ведёшь слизней. Открывай:')) el('copy').click();
+};
+el('start').onclick = () => enter();
+el('again').addEventListener('click', event => { event.preventDefault(); restart(); });
+
+async function boot() {
+  telegram.init();
+  room = telegram.startParam();
+  if (room) {
+    const raw = await telegram.get(ticketKey(room));
+    let stored;
+    try { stored = JSON.parse(raw); } catch {}
+    if (stored && await alive(stored, true)) {
+      if (await enter(stored)) return;
+      el('start').textContent = 'Продолжить дуэль';
+      return;
+    }
+    if (raw) await telegram.set(ticketKey(room), null);
+    el('start').textContent = 'Вступить в дуэль';
+    return;
+  }
+
+  const current = await telegram.get(currentKey);
+  if (!current) return;
+  const raw = await telegram.get(ticketKey(current));
+  let stored;
+  try { stored = JSON.parse(raw); } catch {}
+  if (!stored || !await alive(stored)) {
+    await telegram.set(currentKey, null);
+    if (raw) await telegram.set(ticketKey(current), null);
+    return;
+  }
+  room = current;
+  if (await enter(stored)) return;
+  el('start').textContent = 'Продолжить дуэль';
 }
+boot();

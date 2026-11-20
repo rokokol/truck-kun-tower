@@ -2,8 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Truck-kun Tower</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="vendor/ddlc/ddlc-ui.css">
   <link rel="stylesheet" href="duel.css">
 </head>
@@ -38,6 +39,7 @@
       <details id="invite">
         <summary>Пригласить соперника</summary>
         <input id="link" readonly aria-label="Ссылка для второго игрока">
+        <button id="share" hidden>Отправить в Telegram</button>
         <button id="copy">Скопировать ссылку</button>
       </details>
       <small>ПОЛЕВОЙ ДНЕВНИК / <span id="role"></span></small>
@@ -72,6 +74,7 @@
   </main>
   <script src="signalr.min.js"></script>
   <script src="sounds.js"></script>
+  <script src="telegram.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

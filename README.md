@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/emblem.png" width="110" alt=""></p>
+<p align="center"><img src="docs/logo.png" width="110" alt=""></p>
 
 # Truck-kun Tower
 
-A tower defence siege for two players in the browser. One player guards a keep at the end of a random slime maze, the other buys slimes and picks the gates they come from
+An io-game of tower defence for two players in the browser. One player guards a keep at the end of a random slime maze, the other buys slimes and picks the gates they come from
 
 [![docker](https://img.shields.io/badge/docker-compose-2496ED?style=flat&logo=docker&logoColor=white)](docker-compose.yml) [![assets](https://img.shields.io/badge/docs-assets-555?style=flat)](ASSETS.md)
 
@@ -33,8 +33,8 @@ The server generates the maze and resolves each wave. The browser replays the re
 - Gold arrives for both players after each wave, and every wave pays more than the one before
 - The keep falls at zero hearts. A keep that stands after the last wave decides the match on the hearts left
 
-| Defence | Attack |
-| --- | --- |
+| Defence                                         | Attack                                |
+| ----------------------------------------------- | ------------------------------------- |
 | ![A defender places a tower](docs/planning.png) | ![A wave under fire](docs/battle.png) |
 
 ## Run it with Docker
@@ -61,13 +61,13 @@ docker run --rm -p 5184:8080 --network host \
 
 The client talks to one REST service. Every answer is a DTO, errors are `ProblemDetails` with a Russian `detail`
 
-| Group | Endpoints |
-| --- | --- |
-| Accounts | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `GET /api/users/{id}`, `PUT /api/users/me`, `DELETE /api/users/me` |
-| Friends | `GET /api/friends`, `GET /api/friends/requests`, `POST /api/friends/requests`, `POST /api/friends/requests/{id}/accept`, `DELETE /api/friends/requests/{id}`, `DELETE /api/friends/{userId}` |
-| Invitations | `GET /api/invites`, `POST /api/invites`, `POST /api/invites/{id}/accept`, `DELETE /api/invites/{id}` |
-| Duels | `POST /api/duels`, `GET /api/duels`, `GET /api/duels/{id}`, `POST /api/duels/{id}/join`, `POST /api/duels/{id}/swap`, `POST /api/duels/{id}/swap/accept`, `POST /api/duels/{id}/swap/decline`, `GET /api/duels/{id}/state`, `POST /api/duels/{id}/moves`, `DELETE /api/duels/{id}` |
-| History | `GET /api/matches`, `GET /api/matches/{id}`, `PATCH /api/matches/{id}`, `DELETE /api/matches/{id}`, `GET /api/stats`, `GET /api/leaderboard` |
+| Group       | Endpoints                                                                                                                                                                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts    | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `GET /api/users/{id}`, `PUT /api/users/me`, `DELETE /api/users/me`                                                                                                                                          |
+| Friends     | `GET /api/friends`, `GET /api/friends/requests`, `POST /api/friends/requests`, `POST /api/friends/requests/{id}/accept`, `DELETE /api/friends/requests/{id}`, `DELETE /api/friends/{userId}`                                                                                       |
+| Invitations | `GET /api/invites`, `POST /api/invites`, `POST /api/invites/{id}/accept`, `DELETE /api/invites/{id}`                                                                                                                                                                               |
+| Duels       | `POST /api/duels`, `GET /api/duels`, `GET /api/duels/{id}`, `POST /api/duels/{id}/join`, `POST /api/duels/{id}/swap`, `POST /api/duels/{id}/swap/accept`, `POST /api/duels/{id}/swap/decline`, `GET /api/duels/{id}/state`, `POST /api/duels/{id}/moves`, `DELETE /api/duels/{id}` |
+| History     | `GET /api/matches`, `GET /api/matches/{id}`, `PATCH /api/matches/{id}`, `DELETE /api/matches/{id}`, `GET /api/stats`, `GET /api/leaderboard`                                                                                                                                       |
 
 The live channel is SignalR at `/bell`: a room change, a friend request, an invitation, a side question and presence. A guest joins a room with the seat token, an account with its JWT
 
@@ -75,13 +75,13 @@ The live channel is SignalR at `/bell`: a room change, a friend request, an invi
 
 Five entities carry the durable side of the game
 
-| Entity | What it holds |
-| --- | --- |
-| `User` | Nickname, PBKDF2 hash, registration date |
-| `Friendship` | Two players and the state of their request |
-| `DuelInvite` | An invitation to a room, with its answer |
-| `Room` | A duel lobby: who sits on which side and how it ended |
-| `Match` | A finished match, with one `Wave` row per wave |
+| Entity       | What it holds                                         |
+| ------------ | ----------------------------------------------------- |
+| `User`       | Nickname, PBKDF2 hash, registration date              |
+| `Friendship` | Two players and the state of their request            |
+| `DuelInvite` | An invitation to a room, with its answer              |
+| `Room`       | A duel lobby: who sits on which side and how it ended |
+| `Match`      | A finished match, with one `Wave` row per wave        |
 
 A live board (maze, towers, timers) stays in memory; a room row says who was in it, so a restart marks it abandoned instead of pretending it is playable
 

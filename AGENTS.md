@@ -21,6 +21,7 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 ```
 
 - A red `check.mjs` run against an older container is expected, because the script pins the current wire format
+- Run `node tests/ui-boot.mjs`, `node tests/ui-preferences.mjs` and `node tests/ui-replay.mjs` with local `playwright-core` and Chromium. Set `PLAYWRIGHT_CORE` or `CHROMIUM` to override their paths. `ui-boot` loads the real script set, SignalR build included, because the six classic scripts share one global scope and a repeated top-level name stops a script from running; the other two need no game server, SignalR or PostgreSQL
 
 ## Where a rule lives
 
@@ -38,11 +39,11 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 - A chair in a live board belongs to an account or to a guest holding the random seat token; the guest path keeps the plain invite link working without a registration
 - Accounts also get friends, invitations and match history; a purely guest room lives only in memory, so a restart marks its `Room` row abandoned
 
-## Web app
+## The io-game
 
 - Screens: `#auth` and `#lobby` are Alpine components in `wwwroot/lobby.js`, the board stays the hand-drawn SVG of `wwwroot/game.js`. Neither script draws the other's screen: they meet on the `tower:screen` event
 - The invite is a plain link with `?room=`; nothing depends on a messenger or a native shell
-- `?v=@hash@` in `index.html` turns into the hash of the four assets while the image builds: Cloudflare keeps a script for four hours whatever the origin's cache headers say, so a page must point at a new address when a file changes, and a hand-bumped number is a step somebody forgets
+- `Dockerfile` replaces `?v=@hash@` in `index.html` with a hash of the marked assets. Cloudflare can keep an asset after its content changes, so the URL must change too
 - The hub at `/bell` carries the room state, friend requests, invitations, swap requests and presence. The JWT travels as `access_token` in the query, the guest seat token as the second argument of `JoinRoom`
 - The game answers both plain HTTP behind the proxy and HTTPS on `8443`; keep both in mind when a change touches URLs or cookies
 
@@ -59,3 +60,5 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 
 - `docs/` holds what the README and the old bot profile needed: a 640×360 banner, a 640×360 demo GIF and a 512×512 avatar. They are not game sources
 - `ASSETS.md` names every borrowed font and the vendored theme
+- `docs/truck-kun-tower.jpg` is the one artwork behind `docs/telegram-banner.png` (640×360) and `docs/og.png` (1200×630, the link preview the page names in `og:image`). `node tools/banner.mjs` draws both and copies the preview to `wwwroot/og.png`, which the site serves: the picture is fitted to each frame's width on the artwork's own paper colour, because a crop would cut the drawn wordmark and a stretch would show a longer truck than the drawing has
+- `node tools/icons.mjs` draws the favicon set from `docs/logo.png`: `wwwroot/favicon.ico` at 16, 32 and 48, `wwwroot/icon-192.png`, `wwwroot/icon-512.png` and `wwwroot/apple-touch-icon.png`, which `wwwroot/site.webmanifest` and the page's icon links name

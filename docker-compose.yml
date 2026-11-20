@@ -6,13 +6,37 @@ services:
       network: host
     image: truck-kun-tower
     container_name: truck-kun-tower
-    ports:
-      - "5184:8080"
+    # The game talks to PostgreSQL on the loopback address, which host networking makes visible
+    network_mode: host
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      ConnectionStrings__Default: "Data Source=/data/duel.db"
+      ASPNETCORE_URLS: http://127.0.0.1:5184
+      ConnectionStrings__Default: "Host=127.0.0.1;Port=5432;Database=${POSTGRES_DB:-tower};Username=${POSTGRES_USER:-tower};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env}
+    mem_limit: 640m
+    memswap_limit: 640m
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: truck-kun-tower-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tower}
+      POSTGRES_USER: ${POSTGRES_USER:-tower}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Published on the loopback only: the game shares the host network, nobody else needs the port
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
-      - tower-data:/data
+      - tower-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tower} -d ${POSTGRES_DB:-tower}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
 volumes:
-  tower-data:
+  tower-db:

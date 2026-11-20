@@ -9,6 +9,8 @@ internal static class Storage {
             db.Matches.Add(new MatchRow {
                 Id = finished.Id,
                 RoomId = roomId,
+                DefenderId = finished.DefenderId,
+                AttackerId = finished.AttackerId,
                 StartedAt = finished.StartedAt,
                 FinishedAt = finished.FinishedAt,
                 WavesPlayed = finished.WavesPlayed,
@@ -24,6 +26,12 @@ internal static class Storage {
                     Groups = wave.Groups
                 }).ToList()
             });
+            // The lobby row and the board finish together, so "my duels" does not keep a dead room open
+            var room = await db.Rooms.FirstOrDefaultAsync(row => row.Id == roomId);
+            if (room is not null) {
+                room.Status = RoomStatus.Finished;
+                room.FinishedAt = finished.FinishedAt;
+            }
             await db.SaveChangesAsync();
         } catch (Exception error) {
             log.LogError(error, "Match {Match} was not saved", finished.Id);

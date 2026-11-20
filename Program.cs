@@ -1,7 +1,5 @@
-using System.Collections.Concurrent;
-using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.StaticFiles;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 
@@ -10,24 +8,71 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions {
     Args = args,
     WebRootPath = Directory.Exists(publishedWebRoot) ? publishedWebRoot : null
 });
-var connection = builder.Configuration.GetConnectionString("Default") ?? "Data Source=duel.db";
-var databaseFile = new SqliteConnectionStringBuilder(connection).DataSource;
-if (!string.IsNullOrEmpty(databaseFile) && Path.GetDirectoryName(Path.GetFullPath(databaseFile)) is {} folder)
-    Directory.CreateDirectory(folder);
+
+// The default suits a compose run on one machine; a deployment passes its own connection string
+var connection = builder.Configuration.GetConnectionString("Default")
+    ?? "Host=127.0.0.1;Port=5432;Database=tower;Username=tower;Password=tower";
 
 builder.Services.AddSignalR();
-builder.Services.AddSingleton<ConcurrentDictionary<string, Duel>>();
+builder.Services.AddControllers().AddJsonOptions(options => {
+    // The browser sends "defender" and reads "Waiting", so enums travel as names, not numbers
+    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
+builder.Services.AddSingleton<Rooms>();
+builder.Services.AddSingleton<Presence>();
+builder.Services.AddSingleton<TokenService>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<FriendService>();
+builder.Services.AddScoped<InviteService>();
+builder.Services.AddScoped<RoomService>();
+builder.Services.AddScoped<MatchService>();
 builder.Services.AddHostedService<WaveClock>();
-builder.Services.AddDbContext<DuelDb>(options => options.UseSqlite(connection));
+builder.Services.AddDbContext<DuelDb>(options => options.UseNpgsql(connection));
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<TokenService>((options, tokens) => {
+        options.TokenValidationParameters = tokens.Validation;
+        options.Events = new JwtBearerEvents {
+            // A websocket cannot set an Authorization header, so SignalR carries the token in the query
+            OnMessageReceived = context => {
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/bell"))
+                    context.Token = token;
+                return Task.CompletedTask;
+            }
+        };
+    });
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
-var rooms = app.Services.GetRequiredService<ConcurrentDictionary<string, Duel>>();
-using (var scope = app.Services.CreateScope()) {
-    try {
-        scope.ServiceProvider.GetRequiredService<DuelDb>().Database.EnsureCreated();
-    } catch (Exception error) {
-        app.Logger.LogError(error, "Database unavailable, matches will not be saved");
+
+await using (var scope = app.Services.CreateAsyncScope()) {
+    var db = scope.ServiceProvider.GetRequiredService<DuelDb>();
+    for (var attempt = 1; ; attempt++) {
+        try {
+            await db.Database.MigrateAsync();
+            break;
+        } catch (Exception error) when (attempt < 10) {
+            app.Logger.LogWarning(error, "PostgreSQL is not ready yet, retrying ({Attempt}/10)", attempt);
+            await Task.Delay(TimeSpan.FromSeconds(3));
+        }
     }
+    // A board lives in memory, so a room from before this start can never be played again
+    var dead = await db.Rooms
+        .Where(room => room.Status == RoomStatus.Waiting || room.Status == RoomStatus.Playing).ToListAsync();
+    foreach (var room in dead) room.Status = RoomStatus.Abandoned;
+    var stale = await db.DuelInvites.Where(invite => invite.Status == InviteStatus.Pending).ToListAsync();
+    foreach (var invite in stale) {
+        invite.Status = InviteStatus.Expired;
+        invite.ResolvedAt = DateTime.UtcNow;
+    }
+    if (dead.Count + stale.Count > 0) await db.SaveChangesAsync();
 }
+
+app.UseAppErrors();
 app.UseDefaultFiles();
 // A page never outlives a deploy: the markup and the sprites are revalidated on every load,
 // so an updated header reaches a tab opened before the restart
@@ -38,77 +83,8 @@ app.UseStaticFiles(new StaticFileOptions {
             : new CacheControlHeaderValue { MaxAge = TimeSpan.Zero, MustRevalidate = true };
     }
 });
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
 app.MapHub<Bell>("/bell");
-app.MapPost("/room", () => {
-    var id = Guid.NewGuid().ToString("N");
-    var game = rooms[id] = new Duel();
-    return new { id, key = game.Key(0), seat = 0 };
-});
-app.MapPost("/room/{id}/join", async (string id, IHubContext<Bell> bell) => {
-    if (!rooms.TryGetValue(id, out var g)) return Results.NotFound();
-    lock (g) {
-        if (!g.Join()) return Results.Conflict();
-    }
-    await bell.Clients.Group(id).SendAsync("changed");
-    return Results.Ok(new { id, key = g.Key(1), seat = 1 });
-});
-app.MapPost("/room/{id}/state", (string id, Ticket t) => {
-    if (!rooms.TryGetValue(id, out var g)) return Results.NotFound();
-    lock (g) return g.Seat(t.Key) is var i && i >= 0 ? Results.Ok(g.View(i)) : Results.Unauthorized();
-});
-app.MapPost("/room/{id}/move", async (string id, Move m, IHubContext<Bell> bell, IServiceScopeFactory scopes) => {
-    if (!rooms.TryGetValue(id, out var g)) return Results.NotFound();
-    object state;
-    Duel.ResultWrite? finished;
-    lock (g) {
-        int i = g.Seat(m.Key);
-        if (i < 0) return Results.Unauthorized();
-        if (g.Apply(i, m) is {} rejected) return rejected;
-        // A swap moves the key to the other seat, so the answer is built for where the key is now
-        state = g.View(g.Seat(m.Key));
-        finished = g.TakeResult();
-    }
-    if (finished is not null) await Storage.SaveAsync(scopes, app.Logger, id, finished);
-    await bell.Clients.Group(id).SendAsync("changed");
-    return Results.Ok(state);
-});
-// LINQ over the database: these queries translate to SQL, they do not run in memory
-app.MapGet("/stats", async (DuelDb db) => {
-    var matches = await db.Matches.CountAsync();
-    var sides = await db.Matches.GroupBy(match => match.Winner)
-        .Select(group => new { side = group.Key, wins = group.Count() })
-        .OrderByDescending(row => row.wins).ToListAsync();
-    var settled = db.Matches.Where(match => match.FinishedAt != default);
-    var waves = await db.Waves.GroupBy(wave => wave.Number)
-        .Select(group => new {
-            wave = group.Key,
-            damage = group.Sum(wave => wave.Damage),
-            slimes = group.Sum(wave => wave.Slimes),
-            killed = group.Sum(wave => wave.SlimesKilled)
-        }).OrderBy(row => row.wave).ToListAsync();
-    return Results.Ok(new {
-        matches,
-        sides,
-        averageWaves = matches == 0 ? 0 : await settled.AverageAsync(match => (double)match.WavesPlayed),
-        averageHeartsLeft = matches == 0 ? 0 : await settled.AverageAsync(match => (double)match.HeartsLeft),
-        keepStanding = await settled.CountAsync(match => match.Survivor),
-        waves
-    });
-});
-app.MapGet("/matches", async (DuelDb db, int? take) => {
-    var limit = Math.Clamp(take ?? 10, 1, 50);
-    var recent = await db.Matches.OrderByDescending(match => match.FinishedAt).Take(limit)
-        .Select(match => new {
-            match.Id, match.RoomId, match.Winner, match.HeartsLeft, match.WavesPlayed,
-            match.StartedAt, match.FinishedAt
-        }).ToListAsync();
-    return Results.Ok(recent);
-});
 app.Run();
-
-public record Ticket(string Key);
-public record Move(string? Key, int Wave, string? Action,
-    [property: System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)] int? Cell);
-public class Bell : Hub {
-    public Task Watch(string id) => Groups.AddToGroupAsync(Context.ConnectionId, id);
-}

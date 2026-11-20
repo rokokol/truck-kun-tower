@@ -2,7 +2,9 @@ bin/
 obj/
 .git/
 .github/
+tests/
 docs/
+data/
 *.db
 *.db-shm
 *.db-wal
@@ -10,3 +12,5 @@ check.mjs
 balance.mjs
 README.md
 ASSETS.md
+TODO.md
+AGENTS.md

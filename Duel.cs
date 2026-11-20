@@ -1,7 +1,11 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 
-internal sealed class Duel {
-    const int Defender = 0, Attacker = 1, WaveCount = 5, ThinkTime = 30;
+public sealed class Duel {
+    public const int Defender = 0, Attacker = 1;
+    const int WaveCount = 5, ThinkTime = 60;
+    const int ReplayTickMs = 90, ReplayMaxMs = 12000, FightTickLimit = 2048;
+    const int CarrierSteps = 5, CarrierPassengers = 3;
     const int FenceHealth = 12;
     static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 8, Frost: 6, Spikes: 3,
         Swarm: 4, Giant: 7, Runner: 3, Armored: 8, Decoy: 5, Ranged: 10, Apc: 12, Fence: 4);
@@ -26,7 +30,14 @@ internal sealed class Duel {
         ImmutableArray<Target> Aims, ImmutableArray<Fence> Fences, ImmutableArray<BuildingView> Buildings,
         ImmutableArray<Target> Siege);
 
-    readonly string[] keys = [Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N")];
+    // A chair belongs to an account, or to a guest holding the random token from the join.
+    // A sideshow of keys used to be the whole identity; now it is only the guest's half of it.
+    public sealed class Seat {
+        public Guid? UserId { get; init; }
+        public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+    }
+    readonly Seat?[] seats = new Seat?[2];
+    int? swapBy;
     Maze maze = new();
     readonly bool[] ready = new bool[2];
     readonly int[] gold = [10, 16];
@@ -38,12 +49,15 @@ internal sealed class Duel {
     int last;
 
     public sealed record WaveWrite(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled, int Groups);
-    public sealed record ResultWrite(Guid Id, DateTime StartedAt, DateTime FinishedAt, int WavesPlayed,
+    public sealed record ResultWrite(Guid Id, Guid? DefenderId, Guid? AttackerId,
+        DateTime StartedAt, DateTime FinishedAt, int WavesPlayed,
         int HeartsLeft, string Winner, bool Survivor, WaveWrite[] Log);
 
     Guid matchId = Guid.NewGuid();
     DateTime startedAt = DateTime.UtcNow;
-    DateTime deadline = DateTime.UtcNow.AddSeconds(ThinkTime);
+    DateTime? deadline;
+    DateTime replayEndsAt;
+    int replayMs;
     readonly List<WaveWrite> log = [];
     ResultWrite? result;
 
@@ -53,21 +67,81 @@ internal sealed class Duel {
         return finished;
     }
 
-    public bool Joined { get; private set; }
+    public bool Joined => seats[Defender] is not null && seats[Attacker] is not null;
+    public bool IsFull => Joined;
+    public int Occupied => (seats[Defender] is null ? 0 : 1) + (seats[Attacker] is null ? 0 : 1);
     bool Done => last >= WaveCount || hp == 0;
-    public bool Expired => !Done && DateTime.UtcNow >= deadline;
-    int SecondsLeft => Done ? 0 : Math.Max(0, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalSeconds));
-    public string Key(int seat) => keys[seat];
-    public int Seat(string? key) => Array.IndexOf(keys, key);
-    public bool Join() {
-        if (Joined) return false;
-        Joined = true;
+    public bool Expired => Joined && !Done && deadline is { } end && DateTime.UtcNow >= end;
+    int SecondsLeft => !Done && deadline is { } end
+        ? Math.Max(0, (int)Math.Ceiling((end - DateTime.UtcNow).TotalSeconds)) : 0;
+    public Guid? UserAt(int side) => seats[side]?.UserId;
+    public Seat? SeatAt(int side) => seats[side];
+
+    public int SeatOf(PlayerRef who) {
+        for (var side = 0; side < 2; side++) {
+            var seat = seats[side];
+            if (seat is null) continue;
+            if (seat.UserId is { } id) {
+                if (who.UserId == id) return side;
+            } else if (who.SeatToken is { } token && TokensMatch(seat.Token, token)) return side;
+        }
+        return -1;
+    }
+
+    static bool TokensMatch(string left, string right) =>
+        CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(left),
+            System.Text.Encoding.UTF8.GetBytes(right));
+
+    // Taking a chair is the join: the first registered account or guest gets the side they picked
+    public bool TryTake(PlayerRef who, int side, out Seat seat) {
+        seat = null!;
+        if (side is not (Defender or Attacker) || seats[side] is not null) return false;
+        if (who.UserId is { } id && (seats[Defender]?.UserId == id || seats[Attacker]?.UserId == id)) return false;
+        seat = seats[side] = new Seat { UserId = who.UserId };
+        // The clock starts when the pair is complete, so the second player is not already late
+        if (Joined) {
+            startedAt = DateTime.UtcNow;
+            deadline = startedAt.AddSeconds(ThinkTime);
+        }
         return true;
     }
 
-    public object View(int seat) => new {
-        joined = Joined, seat, last, done = Done, locked = ready[seat], gold = gold[seat], hp,
-        deadline, secondsLeft = SecondsLeft,
+    // Nothing built, nothing queued, first wave still ahead: sides may move
+    bool Untouched => last == 0 && towers.Count == 0 && fences.Count == 0 && orders.Count == 0 &&
+        !ready[Defender] && !ready[Attacker];
+
+    public bool CanSwitch => Untouched && Occupied > 0;
+    public int? SwapRequestedBy => swapBy;
+
+    // Two players: asking to switch puts the question to the other chair. Alone: just move.
+    public bool AskSwitch(int side) {
+        if (!CanSwitch) return false;
+        if (Occupied == 1) {
+            if (seats[side] is null || seats[1 - side] is not null) return false;
+            seats[1 - side] = seats[side];
+            seats[side] = null;
+            return true;
+        }
+        if (swapBy is not null) return false;
+        swapBy = side;
+        return true;
+    }
+
+    public bool AnswerSwitch(int side, bool accept) {
+        if (swapBy is not int asked || asked == side) return false;
+        // The question is over either way; a side that has been built on meanwhile is not swapped
+        swapBy = null;
+        if (accept && CanSwitch) (seats[Defender], seats[Attacker]) = (seats[Attacker], seats[Defender]);
+        return true;
+    }
+
+    public object View(int seat, string? opponent = null) => new {
+        joined = Joined, seat, side = Sides.Name(seat), last, done = Done, locked = ready[seat],
+        gold = gold[seat], hp,
+        matchId, deadline, secondsLeft = SecondsLeft, replayMs,
+        replayLeftMs = replayMs == 0 ? 0 : (int)Math.Clamp((replayEndsAt - DateTime.UtcNow).TotalMilliseconds, 0, replayMs),
+        swap = swapBy is null ? null : (swapBy == seat ? "mine" : "theirs"),
+        opponent, opponentId = UserAt(1 - seat),
         width = Maze.Width, height = Maze.Height,
         paths = maze.Routes.Values.ToArray(),
         alternatePaths = maze.RouteOptions.Values.SelectMany(options => options.Skip(1)).ToArray(),
@@ -93,12 +167,6 @@ internal sealed class Duel {
             orders.RemoveAt(index);
             return null;
         }
-        if (move.Action == "swap") {
-            if (last > 0 || towers.Count > 0 || fences.Count > 0 || orders.Count > 0 || ready[0] || ready[1])
-                return Results.Conflict();
-            (keys[Defender], keys[Attacker]) = (keys[Attacker], keys[Defender]);
-            return null;
-        }
         if (move.Action == "ready") {
             if (seat == Attacker && orders.Count == 0) return Results.Conflict();
             ready[seat] = true;
@@ -115,7 +183,9 @@ internal sealed class Duel {
         // The spikes lie on the road, like a fence, instead of standing on a wall
         bool valid = fence || trap ? maze.CanFence(cell) : tower ? maze.CanBuild(cell) : maze.Routes.ContainsKey(cell);
         if (!valid) return Results.BadRequest();
-        if (price > gold[seat] || (trap && fences.ContainsKey(cell)) || (tower && towers.Exists(t => t.Cell == cell)))
+        // Two fences on one cell would be paid for and then thrown away as a duplicate key
+        if (price > gold[seat] || ((fence || trap) && fences.ContainsKey(cell)) ||
+            (tower && towers.Exists(t => t.Cell == cell)))
             return Results.Conflict();
         // One trap per road: two sets of spikes on the same path would stop the wave alone
         if (trap && towers.Where(t => t.Type == "spikes").Any(t => SharesRoute(t.Cell, cell)))
@@ -141,12 +211,14 @@ internal sealed class Duel {
         Array.Clear(ready);
         frames = [];
         log.Clear();
+        swapBy = null;
         hp = 24;
         last = 0;
         result = null;
         matchId = Guid.NewGuid();
         startedAt = DateTime.UtcNow;
-        deadline = DateTime.UtcNow.AddSeconds(ThinkTime);
+        deadline = startedAt.AddSeconds(ThinkTime);
+        replayMs = 0;
     }
 
     static int? PriceOf(string? action) => action switch {
@@ -169,7 +241,7 @@ internal sealed class Duel {
 
     // The clock runs the wave down for a player who stopped answering
     public bool CloseIfExpired() {
-        if (!Expired) return false;
+        if (!Joined || !Expired) return false;
         ready[Defender] = true;
         ready[Attacker] = true;
         Resolve();
@@ -179,18 +251,23 @@ internal sealed class Duel {
     void Resolve() {
         last++;
         int before = hp, groups = orders.Count;
-        var (replay, spawned, reached) = Fight();
+        var (replay, spawned, killed) = Fight();
         frames = replay;
-        log.Add(new WaveWrite(last, hp, before - hp, spawned, spawned - reached, groups));
+        var now = DateTime.UtcNow;
+        replayMs = Math.Min(frames.Length * ReplayTickMs, ReplayMaxMs);
+        replayEndsAt = now.AddMilliseconds(replayMs);
+        log.Add(new WaveWrite(last, hp, before - hp, spawned, killed, groups));
+        swapBy = null;
         orders.Clear();
         Array.Clear(ready);
-        if (Done) result = new ResultWrite(matchId, startedAt, DateTime.UtcNow, last, hp,
+        if (Done) result = new ResultWrite(matchId, UserAt(Defender), UserAt(Attacker),
+            startedAt, now, last, hp,
             hp == 0 ? "Attacker" : "Defender", hp > 0, log.ToArray());
         else {
             int multiplier = 1 << (last - 1);
             gold[Defender] += 3 * multiplier;
             gold[Attacker] += 6 * multiplier;
-            deadline = DateTime.UtcNow.AddSeconds(ThinkTime);
+            deadline = replayEndsAt.AddSeconds(ThinkTime);
         }
     }
 
@@ -198,31 +275,35 @@ internal sealed class Duel {
         int index;
         int nextStep;
         bool frozen;
+        int lastFrozenAt = -1;
         public int Health = health;
         public string Kind { get; } = kind;
         public int Cell => path[index];
         public int Remaining => path.Length - 1 - index;
         public int X => path[index] % Maze.Width;
         public int Y => path[index] / Maze.Width;
-        public int Touch => Kind switch { "giant" => 5, "apc" => 3, _ => 1 };
-        public int PathLength => path.Length;
-        public bool Split { get; set; }
+        public int Touch => Kind == "giant" ? 5 : 1;
+        public bool CanDeploy => Kind == "apc" && (index >= CarrierSteps || Remaining == 0);
 
-        // The transport opens up at the halfway mark and lets its passengers out
-        public Slime[] Birth(int count, string kind, int health) {
-            var born = new Slime[count];
-            for (int n = 0; n < count; n++) {
-                born[n] = new Slime(path, kind, health);
-                born[n].index = index;
+        public Slime[] Deploy(int tick, int health) {
+            var born = new Slime[CarrierPassengers];
+            for (int n = 0; n < born.Length; n++) {
+                born[n] = new Slime(path, "balaclava", health) { index = index };
+                born[n].Spawn(tick);
             }
             return born;
         }
 
-        int BaseInterval => Kind switch { "runner" => 1, "giant" => 3, "armored" => 4, _ => 2 };
+        int BaseInterval => Kind switch { "runner" => 1, "giant" => 3, "armored" or "apc" => 4, _ => 2 };
         int FenceHits => Kind is "giant" or "armored" ? 3 : 1;
 
         public void Spawn(int tick) => nextStep = tick + BaseInterval;
-        public void Slow() => frozen = true;
+        public bool Slow() {
+            // Without this guard, a frost tower can freeze the same slime again before it moves.
+            if (lastFrozenAt == index) return false;
+            lastFrozenAt = index;
+            return frozen = true;
+        }
         public bool Frozen => frozen;
         public void Damage(int amount) => Health -= Kind == "armored" ? Math.Max(1, amount / 2) : amount;
 
@@ -268,7 +349,7 @@ internal sealed class Duel {
 
     ImmutableArray<Fence> FenceSnapshot() => fences.Select(f => new Fence(f.Key, f.Value)).ToImmutableArray();
 
-    (ImmutableArray<Frame> Frames, int Spawned, int Reached) Fight() {
+    (ImmutableArray<Frame> Frames, int Spawned, int Killed) Fight() {
         Dictionary<int, Queue<Slime>> pending = [];
         foreach (var order in orders) {
             if (!pending.TryGetValue(order.Cell, out var queue)) pending.Add(order.Cell, queue = new());
@@ -303,9 +384,11 @@ internal sealed class Duel {
         }
 
         List<Slime> mobs = [];
-        int spawned = 0, reached = 0;
+        int spawned = 0, killed = 0;
         var replay = ImmutableArray.CreateBuilder<Frame>();
-        for (int tick = 0; hp > 0 && (pending.Values.Any(queue => queue.Count > 0) || mobs.Count > 0); tick++) {
+        // Bound the replay allocation even if a new effect prevents a slime from moving.
+        for (int tick = 0; tick < FightTickLimit && hp > 0 &&
+             (pending.Values.Any(queue => queue.Count > 0) || mobs.Count > 0); tick++) {
             foreach (var mob in mobs) mob.Advance(tick, fences);
             foreach (var (gate, queue) in pending) {
                 if (queue.Count == 0 || mobs.Any(mob => mob.Cell == gate)) continue;
@@ -327,10 +410,8 @@ internal sealed class Duel {
                 aims.Add(new(tower.Cell, lead.X, lead.Y));
                 if (tick % every != 0) continue;
                 if (tower.Type == "frost") {
-                    foreach (var mob in inRange) {
-                        mob.Slow();
+                    foreach (var mob in inRange.Where(m => m.Slow()))
                         shots.Add(new(tower.Cell, mob.X, mob.Y));
-                    }
                 } else if (hitsAll) {
                     foreach (var mob in inRange) Strike(mob, damage);
                 } else Strike(lead, damage);
@@ -351,7 +432,7 @@ internal sealed class Duel {
             // The ranged slime answers back: it picks the weakest building within three cells
             if (tick % 4 == 0)
                 foreach (var gunner in mobs.Where(m => m.Kind == "ranged" && m.Health > 0)) {
-                    var mark = towers.Where(t => Math.Abs(t.Cell % Maze.Width - gunner.X) <= 3 &&
+                    var mark = towers.Where(t => t.Hp > 0 && Math.Abs(t.Cell % Maze.Width - gunner.X) <= 3 &&
                             Math.Abs(t.Cell / Maze.Width - gunner.Y) <= 3)
                         .MinBy(t => t.Hp);
                     if (mark is null) continue;
@@ -360,26 +441,21 @@ internal sealed class Duel {
                 }
             towers.RemoveAll(t => t.Hp <= 0);
 
-            // The transport opens at the halfway point; broken earlier, it lands nobody
-            var landed = new List<Slime>();
-            foreach (var carrier in mobs.Where(m => m.Kind == "apc" && m.Health > 0 && !m.Split &&
-                         m.Remaining * 2 <= m.PathLength)) {
-                carrier.Split = true;
-                landed.AddRange(carrier.Birth(4, "balaclava", 3 + last));
-            }
+            killed += mobs.RemoveAll(m => m.Health <= 0);
+            // Tower damage comes first: a destroyed carrier cannot deploy its passengers.
+            var landed = mobs.Where(m => m.CanDeploy).SelectMany(m => m.Deploy(tick, 3 + last)).ToArray();
+            mobs.RemoveAll(m => m.CanDeploy);
             mobs.AddRange(landed);
+            spawned += landed.Length;
 
-            foreach (var mob in mobs)
-                if (mob.Health > 0 && mob.Remaining == 0) {
-                    hp = Math.Max(0, hp - mob.Touch);
-                    reached++;
-                }
-            mobs.RemoveAll(m => m.Health <= 0 || m.Remaining == 0);
+            foreach (var mob in mobs.Where(m => m.Remaining == 0))
+                hp = Math.Max(0, hp - mob.Touch);
+            mobs.RemoveAll(m => m.Remaining == 0);
             replay.Add(new(hp, mobs.Select(m => new Mob(m.X, m.Y, m.Kind, m.Frozen)).ToImmutableArray(),
                 shots.ToImmutable(), aims.ToImmutable(), FenceSnapshot(), buildingsNow(), siege.ToImmutable()));
         }
 
-        return (replay.ToImmutable(), spawned, reached);
+        return (replay.ToImmutable(), spawned, killed);
     }
 
     static int Square(int x) => x * x;

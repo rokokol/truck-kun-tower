@@ -42,10 +42,11 @@ The server generates the maze and resolves each wave. The browser replays the re
 ```sh
 cp .env.example .env
 # fill POSTGRES_PASSWORD and JWT_KEY (openssl rand -base64 48) in .env
-docker compose up -d --build
+docker build --network=host -t truck-kun-tower .
+docker compose up -d --no-build
 ```
 
-The game then answers on <http://localhost:5184>. PostgreSQL keeps its data in the `tower-db` volume, so a restart keeps accounts, friends and the played matches
+The image is built by hand because Compose 5 refuses the `network: host` its build section asks for, and NuGet restore inside the bridge fails on a host whose DNS goes through a VPN. The game then answers on <http://localhost:5184>. PostgreSQL keeps its data in the `tower-db` volume, so a restart keeps accounts, friends and the played matches
 
 Without compose
 

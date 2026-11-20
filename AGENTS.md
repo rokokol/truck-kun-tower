@@ -4,7 +4,8 @@ Two players share one maze: one defends the keep, the other buys slimes and pick
 
 ## Run it
 
-- `cp .env.example .env`, fill `POSTGRES_PASSWORD` and `JWT_KEY`, then `docker compose up -d --build` serves the game on <http://localhost:5184>
+- `cp .env.example .env`, fill `POSTGRES_PASSWORD` and `JWT_KEY`, then `docker build --network=host -t truck-kun-tower . && docker compose up -d --no-build` serves the game on <http://localhost:5184>
+- The build is a separate step because Compose 5 refuses the `network: host` the build section asks for, and NuGet restore inside the bridge fails when the host DNS goes through a VPN
 - `docker compose up -d db` alone is enough when the game runs from the SDK: `dotnet run --urls http://localhost:5184`
 - Do not bring back a Nix flake: `nix build` stopped working as soon as EF Core arrived, because the sandbox restore needs a pinned NuGet set, so Docker replaced it
 

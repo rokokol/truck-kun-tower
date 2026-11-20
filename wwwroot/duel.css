@@ -8,6 +8,8 @@
 :root {
   --ink-line: color-mix(in srgb, var(--ddlc-text) 18%, transparent);
   --paper-shadow: color-mix(in srgb, var(--ddlc-line) 70%, transparent);
+  /* a warning triangle with the bang cut out, drawn on the alert as an alpha mask */
+  --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 18'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M10 .8 19.4 17.2H.6zM9.1 6.2h1.8v5.6H9.1zM9.1 13.4h1.8v1.8H9.1z'/%3E%3C/svg%3E");
 }
 
 body {
@@ -204,40 +206,180 @@ summary { cursor: pointer; font-weight: 700; }
 /* orders */
 #planning { margin: 20px 0 0; }
 #planning > small { display: block; margin-bottom: 8px; }
-#actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0; }
+#actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+
+/* An order is a ticket: sprite in a tinted square, the name, the coin chip, the hint under it.
+   The label is a bare text node in the markup, so it is styled through inheritance and lands in
+   the cell that explicit placement leaves free (row 1, column 2) — no markup change needed */
 #actions button {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 3px 10px;
   align-items: center;
   text-align: start;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 10px;
+  color: var(--ddlc-text);
+  font: 800 14.5px/1.15 var(--ddlc-font-prose);
+  letter-spacing: -.01em;
+  white-space: nowrap;
   background: var(--ddlc-ground);
   border: 1px solid var(--ddlc-line);
-  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+  box-shadow: 2px 2px 0 var(--paper-shadow);
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease, background-color .14s ease;
 }
-#actions button[aria-pressed='true'] { border-color: var(--ddlc-accent); box-shadow: inset 0 -3px var(--ddlc-accent); transform: translateY(-1px); }
-#actions button:disabled { background: var(--ddlc-code-ground); }
-#actions button > svg { grid-row: 1 / span 2; grid-column: 2; width: 30px; height: 30px; opacity: .95; }
-#actions button > b { grid-column: 1; font: 700 11px/1 var(--ddlc-font-data); letter-spacing: .06em; color: var(--ddlc-muted); }
-#actions button > span { grid-column: 1; font-size: 12.5px; line-height: 1.25; color: var(--ddlc-muted); font-weight: 500; }
+#actions button > svg {
+  grid-area: 1 / 1 / span 2 / span 1;
+  align-self: start;
+  width: 40px;
+  height: 40px;
+  padding: 5px;
+  background: var(--ddlc-code-ground);
+  border: 1px solid var(--ddlc-line-live);
+  transition: background-color .14s ease, border-color .14s ease, opacity .14s ease;
+}
+#actions button > b {
+  grid-area: 1 / 3;
+  justify-self: end;
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 5px 2px 6px;
+  background: var(--ddlc-ground);
+  border: 1px solid var(--ddlc-line-live);
+  box-shadow: 1px 1px 0 var(--paper-shadow);
+  font: 700 12px/1 var(--ddlc-font-data);
+  letter-spacing: .02em;
+  color: var(--ddlc-text);
+  transition: color .14s ease, border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
+}
+#actions button > span {
+  grid-area: 2 / 2 / auto / -1;
+  font: 500 12.5px/1.3 var(--ddlc-font-prose);
+  letter-spacing: 0;
+  white-space: normal;
+  color: var(--ddlc-muted);
+}
 #actions button > b .gold, #actions button > b .coin { display: inline-flex; }
+#actions button > b .gold { align-items: center; gap: .3em; }
+#actions button > b .coin { width: 1.2em; height: 1.2em; }
+
+/* chosen: an accent ring plus the paper's hard shadow, and the sprite square joins in */
+#actions button[aria-pressed='true'] {
+  border-color: var(--ddlc-accent);
+  background: color-mix(in srgb, var(--ddlc-code-ground) 55%, var(--ddlc-ground));
+  box-shadow: 0 0 0 2px var(--ddlc-accent), 4px 4px 0 var(--ddlc-line-live);
+  transform: translateY(-1px);
+}
+#actions button[aria-pressed='true'] > svg { background: color-mix(in srgb, var(--ddlc-accent) 22%, var(--ddlc-ground)); border-color: var(--ddlc-accent); }
+#actions button[aria-pressed='true'] > b { border-color: var(--ddlc-accent); box-shadow: 1px 1px 0 var(--ddlc-accent); }
+
+/* not available — unaffordable or not the player's turn: the card steps back rather than shouting,
+   the price leaves its chip for plain muted data, and nothing takes a warning colour */
+#actions button:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--ddlc-muted);
+  background: var(--ddlc-ground);
+  border-color: color-mix(in srgb, var(--ddlc-line) 80%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+#actions button:disabled > svg { opacity: .45; border-color: var(--ddlc-line); filter: grayscale(.6); }
+#actions button:disabled > b { color: var(--ddlc-muted); background: transparent; border-color: color-mix(in srgb, var(--ddlc-line-live) 55%, transparent); box-shadow: none; }
+#actions button:disabled > b .gold { opacity: .7; }
+#actions button:disabled > span { opacity: .85; }
+
+@media (hover: hover) {
+  #actions button:enabled:hover {
+    outline: none;
+    border-color: var(--ddlc-line-live);
+    box-shadow: 3px 4px 0 var(--ddlc-line-live);
+    transform: translateY(-2px);
+  }
+  #actions button[aria-pressed='true']:enabled:hover { box-shadow: 0 0 0 2px var(--ddlc-accent), 3px 4px 0 var(--ddlc-line-live); }
+}
+/* the keyboard ring outranks the hover lift: same weight, written later. It sits inside the card,
+   so a focused card and a chosen card never read as the same double frame */
+#actions button:focus-visible:enabled { outline: 2px solid var(--ddlc-accent); outline-offset: -2px; }
+
+/* a phone keeps two columns, so the name gets the whole row and the chip drops beneath it */
+@media (max-width: 430px) {
+  #actions { gap: 8px; }
+  #actions button { grid-template-columns: auto minmax(0, 1fr); font-size: 13.5px; white-space: normal; hyphens: auto; overflow-wrap: break-word; }
+  #actions button > svg { grid-area: 1 / 1 / span 3 / span 1; width: 34px; height: 34px; padding: 4px; }
+  #actions button > b { grid-area: 2 / 2; justify-self: start; }
+  #actions button > span { grid-area: 3 / 2; font-size: 12px; }
+}
+
 #commit { display: block; width: 100%; min-height: 46px; margin-top: 4px; }
 #ready { display: block; width: 100%; min-height: 50px; margin-top: 14px; font-size: 16px; }
 #orders { padding-inline-start: 1.4em; margin: 10px 0 0; font-size: 14px; color: var(--ddlc-muted); }
 #orders li + li { margin-top: 2px; }
 #again { display: inline-block; margin-top: 18px; font-weight: 800; }
-#error { color: var(--ddlc-danger); font-weight: 700; }
+
+/* the server's refusal: a pink slip torn off the pad, signed with a glyph the stylesheet draws,
+   so the alert stays one bare element of text and an empty one takes no band at all */
+#error {
+  position: sticky;
+  bottom: 16px;
+  z-index: 2;
+  margin: 22px 0 0;
+  padding: 11px 40px 11px 46px;
+  border: 1px solid color-mix(in srgb, var(--ddlc-danger) 30%, var(--ddlc-line));
+  border-left: 4px solid var(--ddlc-accent);
+  background: color-mix(in srgb, var(--ddlc-danger) 10%, var(--ddlc-ground));
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--ddlc-danger) 20%, var(--ddlc-line-live));
+  color: var(--ddlc-text);
+  font: 700 14px/1.4 var(--ddlc-font-prose);
+  text-wrap: pretty;
+  animation: error-in .18s ease-out;
+}
+#error:empty { display: none; }
+#error::before, #error > .glyph {
+  position: absolute;
+  left: 15px;
+  top: 12px;
+  width: 20px;
+  height: 18px;
+  background-color: var(--ddlc-danger);
+  mask: var(--warn-glyph) center / contain no-repeat;
+}
+#error::before { content: ''; }
+/* an explicit glyph element, if the markup ever carries one, takes over from the generated one */
+#error:has(> .glyph)::before { content: none; }
+#error::after {
+  content: 'ОШИБКА';
+  position: absolute;
+  top: -9px;
+  right: 12px;
+  padding: 3px 6px 2px;
+  background: var(--ddlc-danger);
+  color: var(--ddlc-on-accent);
+  box-shadow: 2px 2px 0 color-mix(in srgb, var(--ddlc-danger) 35%, var(--ddlc-line-live));
+  font: 700 8.5px/1 var(--ddlc-font-data);
+  letter-spacing: .18em;
+  pointer-events: none;
+}
+@media (max-width: 430px) {
+  #error { bottom: 10px; padding: 9px 14px 9px 42px; font-size: 13px; }
+  #error::before, #error > .glyph { left: 14px; top: 10px; width: 17px; height: 15px; }
+  #error::after { top: -8px; right: 10px; }
+}
 
 @keyframes bolt-flight { to { transform: translateX(var(--flight)); } }
 @keyframes keep-hit { 25% { transform: translateX(-3px); } 65% { transform: translateX(3px); } }
 @keyframes burst { 0%, 100% { opacity: .4; transform: scale(.9); } 50% { opacity: .95; transform: scale(1.06); } }
 @keyframes pip { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+@keyframes error-in { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .keep-hit, .projectile, .plate-burst, .pips i.now { animation: none; }
+  .keep-hit, .projectile, .plate-burst, .pips i.now, #error { animation: none; }
   .projectile { transform: translateX(var(--flight)); }
-  .brand-mark, #actions button { transition: none; }
+  .brand-mark, #actions button, #actions button > svg, #actions button > b { transition: none; }
   #start, #ready:enabled { transition: none; }
+  #actions button, #actions button[aria-pressed='true'] { transform: none; }
+  @media (hover: hover) { #actions button:enabled:hover { transform: none; } }
 }

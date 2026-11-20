@@ -376,11 +376,12 @@ async function alive(player, allowDone = false) {
   }
 }
 
-// A ticket lives in the browser itself: no Telegram, no server-side session
+// A ticket lives in the tab itself: two tabs in one browser are two players, and the
+// shared localStorage would hand the second tab the first one's seat
 const store = {
-  async get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  async get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
   async set(key, value) {
-    try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {}
+    try { value === null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch {}
   },
 };
 

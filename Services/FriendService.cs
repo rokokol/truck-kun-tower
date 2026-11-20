@@ -51,7 +51,7 @@ public sealed class FriendService(IUnitOfWork unit, Presence presence, IHubConte
             };
             unit.Friendships.Add(row);
             await unit.SaveAsync();
-            var sent = new IncomingRequestDto(row.Id, new UserBrief(target.Id, target.Nickname), row.CreatedAt);
+            var sent = new IncomingRequestDto(row.Id, await BriefAsync(row.RequesterId, row.Requester), row.CreatedAt);
             await Send(target.Id, "FriendRequest", new { request = sent });
             return sent;
         }

@@ -33,7 +33,7 @@ main {
 small { font: 11px var(--ddlc-font-data); letter-spacing: .1em; color: var(--ddlc-muted); }
 
 /* header: emblem, wordmark and the only chrome the game needs */
-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 12px; border-bottom: 2px solid var(--ddlc-line); margin-bottom: 24px; position: relative; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 12px; border-bottom: 2px solid var(--ddlc-line); margin-bottom: 24px; position: relative; }
 header::after { content: ''; position: absolute; left: 0; right: 0; bottom: -7px; border-bottom: 2px dotted var(--ddlc-line-live); }
 .brand { display: flex; align-items: center; gap: .5rem; padding: 2px 4px 2px 0; border-radius: 3px; color: inherit; line-height: 1; text-decoration: none; }
 .brand:focus-visible { outline: 2px solid var(--ddlc-accent); outline-offset: 3px; }
@@ -44,7 +44,41 @@ header::after { content: ''; position: absolute; left: 0; right: 0; bottom: -7px
 .brand-word b span { color: var(--ddlc-accent); }
 .brand-word em { font: 800 9px/1 var(--ddlc-font-data); font-style: normal; letter-spacing: .42em; text-transform: uppercase; color: var(--ddlc-accent); padding-left: .2rem; }
 .brand:hover .brand-word b { text-shadow: 2px 2px 0 var(--ddlc-line); }
-header #sound { flex: none; font: 700 10px/1 var(--ddlc-font-data); letter-spacing: .1em; text-transform: uppercase; padding: 7px 9px; background: var(--ddlc-code-ground); border: 1px solid var(--ddlc-line); box-shadow: none; }
+.header-tools, .language { display: flex; align-items: center; gap: 4px; }
+.header-tools { margin-inline-start: auto; }
+header .header-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 34px;
+  min-height: 36px;
+  padding: 4px 7px;
+  border: 1px solid var(--ddlc-line);
+  background: var(--ddlc-code-ground);
+  color: var(--ddlc-text);
+  font: 700 11px/1 var(--ddlc-font-data);
+  text-decoration: none;
+}
+.header-control svg { width: 16px; height: 16px; flex: none; fill: currentColor; }
+.header-control:focus-visible { outline: 2px solid var(--ddlc-accent); outline-offset: 2px; }
+@media (hover: hover) {
+  a.header-control:hover { border-color: var(--ddlc-accent); color: var(--ddlc-accent); }
+}
+.language { gap: 0; }
+.language button + button { border-inline-start: 0; }
+.language [aria-pressed='true'] { color: var(--ddlc-ground); background: var(--ddlc-text); }
+@media (max-width: 480px) {
+  #sound-label { display: none; }
+}
+@media (max-width: 380px) {
+  header { gap: 6px; }
+  .brand { gap: 3px; }
+  .brand-mark { width: 29px; height: 34px; }
+  .brand-word { font-size: 18px; }
+  .header-tools { gap: 3px; }
+  header .header-control { min-width: 32px; padding-inline: 5px; }
+}
 
 /* buttons: paper, then one loud action per screen */
 button, input { font: inherit; padding: 9px 12px; background: var(--ddlc-ground); color: var(--ddlc-text); border: 1px solid var(--ddlc-line-live); }
@@ -151,7 +185,6 @@ h1 em { display: block; font: 650 clamp(15px, 3.4vw, 18px)/1.35 var(--ddlc-font-
   color: var(--ddlc-ground);
 }
 button.ghost { background: transparent; border-color: var(--ddlc-line); color: var(--ddlc-muted); font-weight: 700; }
-.form-error { margin: 10px 0 14px; color: var(--ddlc-danger); font-weight: 700; }
 .notice { margin: 0 0 14px; padding: 8px 12px; border: 1px dashed var(--ddlc-line-live); background: var(--ddlc-code-ground); font-size: 14px; user-select: all; }
 .fine { margin: 10px 0 0; font-size: 13px; line-height: 1.45; color: var(--ddlc-muted); }
 .foot { margin-top: 22px; }
@@ -311,15 +344,47 @@ summary { cursor: pointer; font-weight: 700; }
 .entry-marker circle { fill: var(--ddlc-code-ground); stroke: var(--ddlc-accent); }
 .entry-marker text, .damage { fill: var(--ddlc-text); text-anchor: middle; font: bold 14px var(--ddlc-font-data); }
 .entry-marker text { dominant-baseline: central; }
-.fence text { font: bold 11px var(--ddlc-font-data); fill: var(--ddlc-text); stroke: var(--ddlc-ground); stroke-width: 2.5; paint-order: stroke; }
 .ghost { opacity: .68; }
-.frost-shot path, .spike-shot circle { fill: none; stroke-linecap: round; }
-.frost-shot path { stroke: var(--ddlc-sayori-eye); stroke-width: 2.5; }
+.battle-hp-amount {
+  fill: var(--ddlc-text); stroke: var(--ddlc-ground); stroke-width: 2.5; paint-order: stroke;
+  text-anchor: middle; dominant-baseline: central; font: bold 11px var(--ddlc-font-data);
+}
+.battle-hp-track { fill: var(--ddlc-ground); stroke: var(--ddlc-text); stroke-width: 1.1; }
+.battle-hp-fill { fill: var(--ddlc-accent); }
+.battle-hp.low .battle-hp-fill { fill: color-mix(in srgb, var(--ddlc-danger) 82%, var(--ddlc-text)); }
+.mob-body { transform-box: fill-box; transform-origin: center 78%; }
+.frost-shot path { fill: none; stroke-linecap: round; stroke: var(--ddlc-sayori-eye); stroke-width: 2.5; }
 .frost-shot circle { fill: color-mix(in srgb, var(--ddlc-sayori-eye) 45%, transparent); stroke: var(--ddlc-sayori-eye); stroke-width: 2; }
-.spike-shot circle { stroke: var(--ddlc-jacket); stroke-width: 2.5; stroke-dasharray: 3 3; }
-.cannonball { fill: var(--ddlc-ink); stroke: var(--ddlc-sayori); stroke-width: 1.5; }
+.spike-shot, .mine-burst, .siege-shot { animation: battle-flash min(var(--battle-frame, 160ms), 160ms) ease-out both; }
+.spike-shot { fill: none; stroke: var(--ddlc-accent); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.spike-shot circle { stroke-dasharray: 3 4; }
+.spike-break { stroke: var(--ddlc-text); }
+.spike-fragments { stroke: var(--ddlc-danger); stroke-width: 2.5; }
+.mine-burst { fill: none; stroke: var(--ddlc-danger); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mine-burst circle { fill: var(--ddlc-highlight); }
+.mine-burst path { fill: var(--ddlc-paper); }
+.apc-dust {
+  fill: color-mix(in srgb, var(--ddlc-jacket) 72%, var(--ddlc-text));
+  animation: dust-drift min(var(--battle-frame, 200ms), 200ms) ease-out both;
+}
+.shot-line { animation: battle-flash min(var(--battle-frame, 180ms), 180ms) ease-out both; }
+.shot-line path { fill: none; stroke-linecap: round; }
+.shot-line circle { fill: none; }
+.bolt-shot path { stroke: var(--ddlc-bow-shadow); stroke-width: 1.8; stroke-dasharray: 5 4; }
+.bolt-shot circle { stroke: var(--ddlc-ink); stroke-width: 1.6; }
+.cannon-shot path { stroke: var(--ddlc-ink); stroke-width: 2.4; stroke-dasharray: 9 3 2 3; }
+.cannon-shot circle { stroke: var(--ddlc-ink); stroke-width: 1.6; }
+.cannon-shot .shot-core { fill: var(--ddlc-ink); stroke: none; }
 .frozen { filter: saturate(.35) hue-rotate(165deg) brightness(1.1); }
-.siege { fill: none; stroke: var(--ddlc-danger); stroke-width: 2.5; stroke-dasharray: 4 4; }
+.siege { fill: none; stroke: var(--ddlc-danger); stroke-width: 1.7; stroke-dasharray: 3 3; }
+.siege-streak {
+  fill: none; stroke: var(--ddlc-text); stroke-width: 1.7; stroke-linecap: round;
+  animation: siege-flight min(var(--battle-frame, 90ms), 90ms) linear both;
+}
+.siege-muzzle {
+  fill: var(--ddlc-paper); stroke: var(--ddlc-danger); stroke-width: 1.1;
+  animation: battle-flash min(var(--battle-frame, 115ms), 115ms) ease-out both;
+}
 .pulse-shot, .projectile { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .pulse-shot { stroke: var(--ddlc-accent); stroke-width: 3; }
 .projectile { stroke: var(--ddlc-text); stroke-width: 2.5; paint-order: stroke; animation: bolt-flight 70ms linear both; }
@@ -331,11 +396,9 @@ summary { cursor: pointer; font-weight: 700; }
 /* orders */
 #planning { margin: 20px 0 0; }
 #planning > small { display: block; margin-bottom: 8px; }
+.game-cap, #planning > small, #swapAsk > small { text-transform: uppercase; }
 #actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
 
-/* An order is a ticket: sprite in a tinted square, the name, the coin chip, the hint under it.
-   The label is a bare text node in the markup, so it is styled through inheritance and lands in
-   the cell that explicit placement leaves free (row 1, column 2) — no markup change needed */
 #actions button {
   position: relative;
   display: grid;
@@ -365,6 +428,9 @@ summary { cursor: pointer; font-weight: 700; }
   border: 1px solid var(--ddlc-line-live);
   transition: background-color .14s ease, border-color .14s ease, opacity .14s ease;
 }
+#actions button > strong { grid-area: 1 / 2; font-weight: inherit; }
+.action-limit { display: block; margin-top: .25em; letter-spacing: 0; }
+.action-limit:empty { display: none; }
 #actions button > b {
   grid-area: 1 / 3;
   justify-self: end;
@@ -444,15 +510,14 @@ summary { cursor: pointer; font-weight: 700; }
 #ready { display: block; width: 100%; min-height: 50px; margin-top: 14px; font-size: 16px; }
 #orders { padding-inline-start: 1.4em; margin: 10px 0 0; font-size: 14px; color: var(--ddlc-muted); }
 #orders li + li { margin-top: 2px; }
-#again { display: inline-block; margin-top: 18px; font-weight: 800; }
+.after-match { display: grid; gap: 10px; margin-top: 18px; }
+.after-match[hidden] { display: none; }
+.after-match button { min-height: 46px; }
+#again { font-weight: 800; }
 
-/* the server's refusal: a pink slip torn off the pad, signed with a glyph the stylesheet draws,
-   so the alert stays one bare element of text and an empty one takes no band at all */
-#error {
-  position: sticky;
-  bottom: 16px;
-  z-index: 2;
-  margin: 22px 0 0;
+.error-slip {
+  position: relative;
+  margin: 10px 0 14px;
   padding: 11px 40px 11px 46px;
   border: 1px solid color-mix(in srgb, var(--ddlc-danger) 30%, var(--ddlc-line));
   border-left: 4px solid var(--ddlc-accent);
@@ -463,8 +528,15 @@ summary { cursor: pointer; font-weight: 700; }
   text-wrap: pretty;
   animation: error-in .18s ease-out;
 }
-#error:empty { display: none; }
-#error::before, #error > .glyph {
+#error {
+  position: sticky;
+  bottom: 16px;
+  z-index: 2;
+  margin: 22px 0 0;
+}
+.form-error { text-align: start; }
+.error-slip::before {
+  content: '';
   position: absolute;
   left: 15px;
   top: 12px;
@@ -473,11 +545,8 @@ summary { cursor: pointer; font-weight: 700; }
   background-color: var(--ddlc-danger);
   mask: var(--warn-glyph) center / contain no-repeat;
 }
-#error::before { content: ''; }
-/* an explicit glyph element, if the markup ever carries one, takes over from the generated one */
-#error:has(> .glyph)::before { content: none; }
-#error::after {
-  content: 'ОШИБКА';
+.error-slip-heading {
+  text-transform: uppercase;
   position: absolute;
   top: -9px;
   right: 12px;
@@ -490,18 +559,25 @@ summary { cursor: pointer; font-weight: 700; }
   pointer-events: none;
 }
 @media (max-width: 430px) {
-  #error { bottom: 10px; padding: 9px 14px 9px 42px; font-size: 13px; }
-  #error::before, #error > .glyph { left: 14px; top: 10px; width: 17px; height: 15px; }
-  #error::after { top: -8px; right: 10px; }
+  #error { bottom: 10px; }
+  .error-slip { padding: 9px 14px 9px 42px; font-size: 13px; }
+  .error-slip::before { left: 14px; top: 10px; width: 17px; height: 15px; }
+  .error-slip-heading { top: -8px; right: 10px; }
 }
 
 @keyframes bolt-flight { to { transform: translateX(var(--flight)); } }
+@keyframes siege-flight { to { transform: translateX(var(--siege-flight)); } }
+@keyframes battle-flash { 0%, 22% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes dust-drift { from { opacity: .64; } to { opacity: 0; transform: translateX(-7px); } }
 @keyframes keep-hit { 25% { transform: translateX(-3px); } 65% { transform: translateX(3px); } }
 @keyframes burst { 0%, 100% { opacity: .4; transform: scale(.9); } 50% { opacity: .95; transform: scale(1.06); } }
 @keyframes pip { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes error-in { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .keep-hit, .projectile, .plate-burst, .pips i.now, #error { animation: none; }
+  .keep-hit, .projectile, .plate-burst, .pips i.now, .error-slip { animation: none; }
+  .spike-shot, .mine-burst, .siege-shot, .siege-streak, .siege-muzzle, .shot-line { animation: none; }
+  .siege-streak { transform: translateX(var(--siege-flight)); }
+  .apc-dust { display: none; }
   .projectile { transform: translateX(var(--flight)); }
   .brand-mark, .tower, #actions button, #actions button > svg, #actions button > b { transition: none; }
   #start, #ready:enabled { transition: none; }

@@ -16,10 +16,14 @@ const sounds = (() => {
     loss: [[0, 392, 330, .18, 'triangle', .12], [.14, 294, 247, .18, 'triangle', .10], [.29, 196, 98, .29, 'triangle', .10]],
   };
   const update = () => {
+    const label = i18n.t(!Audio ? 'soundUnavailable' : enabled ? 'soundOn' : 'soundOff');
     button.disabled = !Audio;
-    button.textContent = !Audio ? 'Звук недоступен' : enabled ? '♪ Звук вкл' : '♪ Звук выкл';
+    button.title = label;
+    document.getElementById('sound-label').textContent = label;
     button.setAttribute('aria-pressed', String(Boolean(Audio && enabled)));
+    button.querySelector('.sound-mark').dataset.state = !Audio ? 'unavailable' : enabled ? 'on' : 'off';
   };
+  i18n.onChange(update);
   function unlock() {
     if (!enabled || !Audio) return Promise.resolve();
     try {

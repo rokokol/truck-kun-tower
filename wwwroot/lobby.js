@@ -5,6 +5,8 @@
 (function () {
   'use strict';
 
+  const { message, feedback } = i18n;
+
   const key = {
     token: 'tower:token',
     seat: id => `duel:${id}`,
@@ -19,22 +21,13 @@
   };
 
   class ApiError extends Error {
-    constructor(message, status) {
-      super(message);
+    constructor(status, detail, code) {
+      super(detail || `HTTP ${status}`);
       this.name = 'ApiError';
       this.status = status;
+      this.feedback = i18n.http(status, detail, code);
     }
   }
-
-  const fallback = status => ({
-    0: 'Сеть недоступна, проверь соединение',
-    400: 'Проверь введённые данные',
-    401: 'Нужен вход',
-    403: 'Нет доступа к этому месту',
-    404: 'Не найдено',
-    409: 'Место занято или условия уже изменились',
-    429: 'Слишком много попыток, подожди немного',
-  }[status] || `Запрос не прошёл: ${status}`);
 
   let token = store.get(key.token);
 
@@ -54,7 +47,7 @@
         credentials: 'same-origin',
       });
     } catch {
-      throw new ApiError(fallback(0), 0);
+      throw new ApiError(0);
     }
     if (response.status === 204) return null;
     const text = await response.text();
@@ -62,7 +55,7 @@
     if (text) {
       try { data = JSON.parse(text); } catch { data = null; }
     }
-    if (!response.ok) throw new ApiError(data?.detail || fallback(response.status), response.status);
+    if (!response.ok) throw new ApiError(response.status, data?.detail, data?.code);
     return data;
   }
 
@@ -109,7 +102,7 @@
       .then(() => hub)
       .catch(error => {
         // The socket is a convenience: the board polls and the lobby refreshes on its own
-        console.warn('Живой канал не поднялся', error?.message ?? error);
+        console.warn('Live channel unavailable', error?.message ?? error);
         hub = null;
         return null;
       });
@@ -157,14 +150,7 @@
     return url.href;
   }
 
-  const sideName = side => (String(side).toLowerCase() === 'attacker' ? 'атакующий' : 'защитник');
-  const statusName = status => ({
-    waiting: 'ждём соперника',
-    playing: 'идёт бой',
-    finished: 'завершена',
-    cancelled: 'отменена',
-    abandoned: 'брошена',
-  }[String(status).toLowerCase()] || String(status).toLowerCase());
+  const duelStatuses = new Set(['waiting', 'playing', 'finished', 'cancelled', 'abandoned']);
 
   const sanctioned = [400, 403, 409];
 
@@ -196,16 +182,25 @@
       note: '',
       lobbyError: '',
 
+      lang: i18n.lang,
+
+      t(key, params) { return i18n.t(key, params, this.lang); },
+      text(value) { return i18n.text(value, this.lang); },
+      inviteLabel(invite) {
+        return this.t('invitedBy', { name: invite.from?.nickname ?? message('opponentName') });
+      },
+
       get joinedLabel() {
         if (!this.user?.createdAt) return '—';
         const date = new Date(this.user.createdAt);
         return Number.isNaN(date.getTime())
           ? '—'
-          : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+          : date.toLocaleDateString(i18n.locales[this.lang], { day: 'numeric', month: 'long', year: 'numeric' });
       },
 
       async init() {
         live = this;
+        i18n.onChange(lang => { this.lang = lang; });
         this.pendingRoom = new URLSearchParams(location.search).get('room') ?? '';
         on('FriendRequest', payload => this.pushRequest(payload));
         on('FriendAccepted', () => this.refreshLobby());
@@ -222,7 +217,7 @@
         try {
           await boot();
         } catch (error) {
-          this.error = error?.message ?? 'Что-то пошло не так';
+          this.error = feedback(error);
           this.screen = 'auth';
         }
       },
@@ -232,9 +227,9 @@
         if (this.busy) return;
         const nickname = this.nickname.trim();
         this.note = '';
-        if (nickname.length < 3) { this.error = 'Ник короче трёх символов'; return; }
-        if (this.password.length < 8) { this.error = 'Пароль короче восьми символов'; return; }
-        if (this.password.length > 72) { this.error = 'Пароль длиннее 72 символов'; return; }
+        if (nickname.length < 3) { this.error = message('shortName'); return; }
+        if (this.password.length < 8) { this.error = message('shortPassword'); return; }
+        if (this.password.length > 72) { this.error = message('longPassword'); return; }
         this.busy = true;
         this.error = '';
         try {
@@ -246,7 +241,7 @@
           this.password = '';
           await this.enterLobby();
         } catch (error) {
-          this.error = error.message;
+          this.error = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -267,7 +262,7 @@
           remember(answer.id, answer.seatToken);
           this.openBoard(answer.id, answer.seatToken ?? null);
         } catch (error) {
-          this.error = error.message;
+          this.error = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -320,8 +315,8 @@
           this.outgoing = requests?.outgoing ?? [];
           this.invites = invites ?? [];
         } catch (error) {
-          if (error.status === 401) this.expire(error.message);
-          else this.lobbyError = error.message;
+          if (error.status === 401) this.expire(feedback(error));
+          else this.lobbyError = feedback(error);
         }
       },
 
@@ -330,7 +325,7 @@
         try {
           this.duels = (await request('/api/duels')) ?? [];
         } catch (error) {
-          if (error.status === 401) this.expire(error.message);
+          if (error.status === 401) this.expire(feedback(error));
         }
       },
 
@@ -343,10 +338,10 @@
         try {
           await request('/api/friends/requests', { method: 'POST', body: { nickname } });
           this.friendNick = '';
-          this.note = `Заявка отправлена: ${nickname}`;
+          this.note = message('requestSent', { name: nickname });
           await this.refreshLobby();
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -361,21 +356,21 @@
           await request(path, { method: accept ? 'POST' : 'DELETE' });
           await this.refreshLobby();
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
       },
 
       async removeFriend(friend) {
-        if (!confirm(`Удалить ${friend.nickname} из друзей?`)) return;
+        if (!confirm(i18n.t('removeFriend', { name: friend.nickname }))) return;
         this.busy = true;
         this.lobbyError = '';
         try {
           await request(`/api/friends/${encodeURIComponent(friend.id)}`, { method: 'DELETE' });
           this.friends = this.friends.filter(row => row.id !== friend.id);
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -390,7 +385,7 @@
           this.invites = this.invites.filter(row => row.id !== invite.id);
           await this.joinRoom(answer?.roomId ?? invite.roomId, 'lobbyError');
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -402,7 +397,7 @@
           await request(`/api/invites/${encodeURIComponent(invite.id)}`, { method: 'DELETE' });
           this.invites = this.invites.filter(row => row.id !== invite.id);
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         }
       },
 
@@ -418,12 +413,12 @@
             try {
               await request('/api/invites', { method: 'POST', body: { friendId, roomId: answer.id } });
             } catch (error) {
-              this.note = `Дуэль создана, но приглашение не ушло: ${error.message}`;
+              this.note = message('inviteFailed', { error: feedback(error) });
             }
           }
           this.openBoard(answer.id, answer.seatToken ?? null);
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -436,14 +431,14 @@
       async continueDuel(duel) {
         const status = String(duel.status).toLowerCase();
         if (['finished', 'cancelled', 'abandoned'].includes(status)) {
-          this.lobbyError = 'Эта дуэль уже закрыта';
+          this.lobbyError = message('duelClosed');
           return;
         }
         this.openBoard(duel.id, seatOf(duel.id));
       },
 
       async cancelDuel(duel) {
-        if (!confirm('Закрыть комнату? Соперник её больше не откроет.')) return;
+        if (!confirm(i18n.t('closeDuel'))) return;
         this.busy = true;
         this.lobbyError = '';
         try {
@@ -451,7 +446,7 @@
           forgetSeat(duel.id);
           this.duels = this.duels.filter(row => row.id !== duel.id);
         } catch (error) {
-          this.lobbyError = error.message;
+          this.lobbyError = feedback(error);
         } finally {
           this.busy = false;
         }
@@ -461,35 +456,40 @@
         const text = linkFor(roomId);
         try {
           await navigator.clipboard.writeText(text);
-          this.note = 'Ссылка скопирована';
+          this.note = message('linkCopied');
         } catch {
           this.note = text;
         }
       },
 
-      statusOf: statusName,
-      sideOf: sideName,
+      statusOf(status) {
+        const code = String(status).toLowerCase();
+        return duelStatuses.has(code) ? this.t(`duel.${code}`) : code;
+      },
+      sideOf(side) {
+        return this.t(String(side).toLowerCase() === 'attacker' ? 'attacker' : 'defender');
+      },
 
       // ---- hub payloads ----
       pushRequest(payload) {
         const row = payload?.request;
         if (!row?.id || this.incoming.some(item => item.id === row.id)) return;
         this.incoming = [row, ...this.incoming];
-        this.note = `Заявка в друзья от ${row.from?.nickname ?? 'игрока'}`;
+        this.note = message('requestFrom', { name: row.from?.nickname ?? message('player') });
       },
 
       pushInvite(payload) {
         const row = payload?.invite;
         if (!row?.id || this.invites.some(item => item.id === row.id)) return;
         this.invites = [row, ...this.invites];
-        this.note = `${row.from?.nickname ?? 'Соперник'} зовёт в дуэль`;
+        this.note = message('invitedBy', { name: row.from?.nickname ?? message('opponentName') });
       },
 
       resolveInvite(payload) {
         if (!payload?.id) return;
         this.invites = this.invites.filter(row => row.id !== payload.id);
         if (payload.status === 'accepted' || payload.status === 'Accepted') {
-          this.note = 'Приглашение приняли — соперник уже в комнате';
+          this.note = message('inviteAccepted');
         }
       },
 
@@ -504,11 +504,11 @@
         if (friend) friend.online = Boolean(payload.online);
       },
 
-      expire(message) {
+      expire(reason) {
         token = null;
         store.set(key.token, null);
         this.user = null;
-        this.error = message || 'Сессия больше не действует, войди заново';
+        this.error = reason || message('expired');
         this.lobbyError = '';
         this.screen = 'auth';
         this.mode = 'login';
@@ -520,7 +520,7 @@
       async joinRoom(roomId, errorSlot) {
         const slot = errorSlot === 'error' ? 'error' : 'lobbyError';
         const id = String(roomId ?? '').trim();
-        if (!id) { this[slot] = 'Ссылка без комнаты'; return; }
+        if (!id) { this[slot] = message('missingRoom'); return; }
         // A chair answers to the seat token or to the account, so an old seat opens without joining
         if (await this.canOpen(id)) {
           this.openBoard(id, seatOf(id));
@@ -544,7 +544,7 @@
             if (!sanctioned.includes(error.status)) break;
           }
         }
-        this[slot] = last?.message ?? 'Не удалось войти в комнату';
+        this[slot] = last ? feedback(last) : message('joinFailed');
       },
 
       async canOpen(roomId) {
@@ -574,7 +574,7 @@
         live.user = await request('/api/auth/me');
       } catch (error) {
         if (error.status === 401 || error.status === 403) token = null;
-        else live.error = error.message;
+        else live.error = feedback(error);
         if (!live.user) store.set(key.token, null);
       }
     }

@@ -12,10 +12,12 @@ ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_NOLOGO=1
 COPY --from=build /app ./
 # Cloudflare keeps a script or a stylesheet for four hours whatever the origin says, so
-# the page must ask for a new address when one changes. The stamp is the hash of those
-# four files, not a number anyone has to remember to bump
+# the page must ask for a new address when one changes. Hash the assets it marks with @hash@
 RUN cd wwwroot \
- && stamp=$(cat duel.css game.js lobby.js sounds.js | md5sum | cut -c1-12) \
+ && assets=$(grep -oE '[[:alnum:]_./-]+[?]v=@hash@' index.html | cut -d '?' -f 1) \
+ && test -n "$assets" \
+ && hashes=$(md5sum $assets) \
+ && stamp=$(printf '%s\n' "$hashes" | md5sum | cut -c1-12) \
  && sed -i "s/@hash@/$stamp/g" index.html \
  && grep -q "?v=$stamp" index.html
 USER app

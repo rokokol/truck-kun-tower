@@ -16,9 +16,21 @@ Two players share one maze: one defends the keep, the other buys slimes and pick
 
 ## Where a rule lives
 
-- `Duel.cs` owns prices, waves and the outcome; the browser only replays the frames the server sends, so a rule written in `game.js` alone is not a rule
+- `Duel.cs` owns prices, waves, ownership limits and the outcome; the browser only replays the frames the server sends, so a rule written in `game.js` alone is not a rule
+- The server closes a wave when its thirty-second clock runs out, so no browser timer decides anything
 - A finished match reaches SQLite after the room lock is released, never inside it
 - `wwwroot/actors.svg` takes its colours from DDLC theme variables; a page that draws those sprites without the variables shows black silhouettes
+
+## Telegram
+
+- `TelegramBot.cs` validates `initData` with the bot token and answers `GET /config`; `wwwroot/telegram.js` is the only file that talks to the Telegram SDK, and it falls back to plain storage in a normal browser
+- A player is identified by their Telegram id, so the same person keeps their side after the webview reloads; a shared ticket lives under `duel:<room>` in the Mini App storage
+- Settings arrive as `Telegram__BotToken`, `Telegram__PublicUrl`, `Telegram__AppLink` and `Telegram__ApiAddress`; the token never reaches the browser
+
+## Deploy
+
+- `deploy/vps/` carries the production compose and the nginx site for `tower.rokokol.art`; port 443 on that host belongs to the VPN, so the site listens on 80 and Cloudflare terminates visitor TLS with the zone in Flexible mode
+- The container runs with `network_mode: host` and binds `127.0.0.1:5184`, so only the reverse proxy reaches it
 
 ## Assets
 

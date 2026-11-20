@@ -32,7 +32,7 @@ const i18n = (() => {
     defender: ['Защитник', 'Defender'],
     attacker: ['Атакующий', 'Attacker'],
     fiveWaves: ['5 волн', '5 waves'],
-    withSound: ['со звуком', 'with sound'],
+    mode: ['tower defence', 'tower defence'],
     shortName: ['Ник короче трёх символов', 'Use at least three characters for your nickname'],
     shortPassword: ['Пароль короче восьми символов', 'Use at least eight characters for your password'],
     longPassword: ['Пароль длиннее 72 символов', 'Use no more than 72 characters for your password'],

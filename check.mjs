@@ -99,7 +99,7 @@ const fencedState = await post(fencedRoom+'/state', {key:fenced.key});
 const shortest = fencedState.paths[0], alt = fencedState.alternatePaths[0];
 const barrier = shortest.find(c=>!alt.includes(c));
 const fencedMove = (player,action,cell,ok=true)=>post(fencedRoom+'/move',{key:player.key,wave:1,action,cell},ok);
-assert.equal(fencedState.prices.smart,2*fencedState.prices.swarm);
+assert.equal(fencedState.prices.smart, 5);
 assert.ok(fencedState.fenceCells.includes(barrier));
 await fencedMove(fenced,'fence',shortest[0],false);
 await fencedMove(fenced,'fence',barrier);
@@ -113,7 +113,7 @@ for (const frame of siege.frames) {
   const blocked = frame.fences.some(f=>f.cell===barrier);
   intact ||= blocked;
   for (const mob of frame.mobs) {
-    assert.ok(mob.smart);
+    assert.equal(mob.kind,'smart');
     const cell=mob.y*width+mob.x;
     assert.ok(shortest.includes(cell));
     if (blocked) assert.ok(shortest.indexOf(cell)<shortest.indexOf(barrier));
@@ -146,4 +146,132 @@ for (let wave=1; wave<=5 && !end.done; wave++) {
 assert.equal(end.done,true);
 assert.equal(end.hp,0);
 await post(open+'/move', {key:invader.key,wave:end.last+1,action:'swarm',cell:end.paths[0][0]}, false);
+const restarted = await post(open+'/move', {key:invader.key,wave:end.last+1,action:'rematch'});
+assert.equal(restarted.last,0,'a rematch starts from the first wave');
+assert.equal(restarted.done,false);
+assert.ok(restarted.hp > 0);
+console.log('PASS: a finished room answers for a rematch');
 console.log('PASS: shared random maps, roles, budget, placement, privacy, synchronized waves, damage, and end lock');
+
+const works = async (build) => {
+  const host = await post('/room'), room = `/room/${host.id}`;
+  const guest = await post(room + '/join');
+  const view = await post(room + '/state', {key: host.key});
+  return {room, host, guest, view};
+};
+for (const [type, price] of Object.entries({cannon: 8, frost: 6, spikes: 3})) {
+  const {room, host, view} = await works();
+  const road = new Set([...view.paths, ...view.alternatePaths].flat()), w = view.width;
+  // Spikes are a trap on the road, while the other two stand on a wall beside it
+  const spot = type === 'spikes' ? view.fenceCells[0] : [...Array(w * view.height).keys()].find(c => !road.has(c) &&
+    (road.has(c - 1) || road.has(c + 1) || road.has(c - w) || road.has(c + w)));
+  const built = await post(room + '/move', {key: host.key, wave: 1, action: type, cell: spot});
+  assert.equal(built.gold, view.gold - price, type + ' costs its price');
+  assert.ok(built.towers.some(t => t.type === type && t.cell === spot), type + ' stands where it was placed');
+}
+{
+  const {room, host, view} = await works();
+  await post(room + '/move', {key: host.key, wave: 1, action: 'spikes', cell: view.paths[0][0]}, false);
+  await post(room + '/move', {key: host.key, wave: 1, action: 'spikes', cell: view.paths[0].at(-1)}, false);
+}
+for (const [type, count] of Object.entries({runner: 6, armored: 3, decoy: 4})) {
+  const {room, host, guest, view} = await works();
+  await post(room + '/move', {key: guest.key, wave: 1, action: type, cell: view.paths[0][0]});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'ready'});
+  const wave = await post(room + '/move', {key: guest.key, wave: 1, action: 'ready'});
+  const kinds = wave.frames.flatMap(f => f.mobs.map(m => m.kind));
+  assert.equal(kinds.length >= count, true, type + ' sends at least ' + count);
+  assert.ok(kinds.every(kind => kind === type), type + ' sends only itself');
+}
+const decoyRoom = await works();
+const decoyGate = decoyRoom.view.paths[0][0];
+const options = [decoyRoom.view.paths[0], ...decoyRoom.view.alternatePaths.filter(p => p[0] === decoyGate)];
+assert.ok(options.length > 1, 'the gate forks, so the decoy has a long way to take');
+console.log('PASS: every new structure is buildable and every new slime spawns only itself');
+{
+  const {room, host, guest, view} = await works();
+  const w = view.width, trap = view.paths[0][2];
+  await post(room + '/move', {key: host.key, wave: 1, action: 'spikes', cell: trap});
+  await post(room + '/move', {key: guest.key, wave: 1, action: 'swarm', cell: view.paths[0][0]});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'ready'});
+  const wave = await post(room + '/move', {key: guest.key, wave: 1, action: 'ready'});
+  const [tx, ty] = [trap % w, Math.floor(trap / w)];
+  const bites = wave.frames.flatMap(f => f.shots.filter(s => s.cell === trap));
+  assert.ok(bites.length > 0, 'the spikes bite at least once');
+  assert.ok(bites.every(s => s.x === tx && s.y === ty), 'the spikes bite only the slime on their own cell');
+}
+{
+  const {room, host, guest, view} = await works();
+  const w = view.width, road = new Set(view.paths[0]);
+  const beside = view.paths[0].slice(2, -2).flatMap(cell => [cell - 1, cell + 1, cell - w, cell + w])
+    .find(cell => cell >= 0 && cell < w * view.height && !road.has(cell));
+  await post(room + '/move', {key: host.key, wave: 1, action: 'frost', cell: beside});
+  await post(room + '/move', {key: guest.key, wave: 1, action: 'swarm', cell: view.paths[0][0]});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'ready'});
+  const wave = await post(room + '/move', {key: guest.key, wave: 1, action: 'ready'});
+  const [fx, fy] = [beside % w, Math.floor(beside / w)];
+  const frost = wave.frames.flatMap(f => f.shots.filter(s => s.cell === beside));
+  assert.ok(frost.length > 0, 'the frost reaches the road beside it');
+  assert.ok(frost.every(s => Math.abs(s.x - fx) <= 1 && Math.abs(s.y - fy) <= 1), 'the frost freezes only its 3×3 square');
+}
+console.log('PASS: the spikes bite one cell and the frost freezes a 3×3 square');
+{
+  const {room, host, guest, view} = await works();
+  const guestView = await post(room + '/state', {key: guest.key});
+  const bought = await post(room + '/move', {key: guest.key, wave: 1, action: 'swarm', cell: view.paths[0][0]});
+  assert.equal(bought.orders.length, 1);
+  const cancelled = await post(room + '/move', {key: guest.key, wave: 1, action: 'cancel', cell: 0});
+  assert.equal(cancelled.orders.length, 0, 'the order is gone');
+  assert.equal(cancelled.gold, guestView.gold, 'the gold comes back');
+  await post(room + '/move', {key: host.key, wave: 1, action: 'cancel', cell: 0}, false);
+}
+{
+  const {room, host, view} = await works();
+  const route = view.paths[0], w = view.width, road = new Set([...view.paths, ...view.alternatePaths].flat());
+  const wall = route.slice(2, -3).flatMap(cell => [cell - 1, cell + 1, cell - w, cell + w])
+    .find(cell => cell >= 0 && cell < w * view.height && !road.has(cell));
+  const first = await post(room + '/move', {key: host.key, wave: 1, action: 'spikes', cell: route[3]});
+  assert.ok(first.towers.some(t => t.type === 'spikes'));
+  await post(room + '/move', {key: host.key, wave: 1, action: 'spikes', cell: route[5]}, false);
+  assert.ok(wall >= 0, 'the map offers a wall for a second trap test');
+}
+{
+  const {room, host, guest} = await works();
+  const swapped = await post(room + '/move', {key: host.key, wave: 1, action: 'swap'});
+  assert.equal(swapped.seat, 1, 'the player who defended now attacks');
+  assert.equal((await post(room + '/state', {key: guest.key})).seat, 0, 'and the other way round');
+}
+{
+  const {room, host, view} = await works();
+  const road = new Set([...view.paths, ...view.alternatePaths].flat()), w = view.width;
+  const wall = [...Array(w * view.height).keys()].find(cell => !road.has(cell) &&
+    (road.has(cell - 1) || road.has(cell + 1) || road.has(cell - w) || road.has(cell + w)));
+  await post(room + '/move', {key: host.key, wave: 1, action: 'bolt', cell: wall});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'swap'}, false);
+}
+console.log('PASS: a landing can be cancelled, one trap per road, and the sides can change');
+{
+  const {room, host, guest, view} = await works();
+  assert.equal(view.prices.smart, 5, 'the smart slimes cost five');
+  const road = new Set([...view.paths, ...view.alternatePaths].flat()), w = view.width;
+  const wall = view.paths[0].slice(1, -1).flatMap(cell => [cell - 1, cell + 1, cell - w, cell + w])
+    .find(cell => cell >= 0 && cell < w * view.height && !road.has(cell));
+  await post(room + '/move', {key: host.key, wave: 1, action: 'bolt', cell: wall});
+  await post(room + '/move', {key: guest.key, wave: 1, action: 'ranged', cell: view.paths[0][0]});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'ready'});
+  const wave = await post(room + '/move', {key: guest.key, wave: 1, action: 'ready'});
+  const hits = wave.frames.flatMap(f => f.siege || []).filter(s => s.cell === wall);
+  assert.ok(hits.length > 0, 'the ranged slime hits the tower it can see');
+  const damaged = !wave.towers.some(t => t.cell === wall) || wave.towers.some(t => t.cell === wall && t.hp < t.max);
+  assert.ok(damaged, 'the tower loses health or falls');
+}
+{
+  const {room, host, guest, view} = await works();
+  await post(room + '/move', {key: guest.key, wave: 1, action: 'apc', cell: view.paths[0][0]});
+  await post(room + '/move', {key: host.key, wave: 1, action: 'ready'});
+  const wave = await post(room + '/move', {key: guest.key, wave: 1, action: 'ready'});
+  const kinds = new Set(wave.frames.flatMap(f => f.mobs.map(m => m.kind)));
+  assert.ok(kinds.has('apc'), 'the transport drives in');
+  assert.ok(kinds.has('balaclava'), 'and lets the passengers out halfway');
+}
+console.log('PASS: the ranged slime breaks towers and the transport lands balaclavas');

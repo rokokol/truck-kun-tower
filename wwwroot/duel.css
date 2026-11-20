@@ -102,7 +102,13 @@ h1 em { display: block; font: 650 clamp(15px, 3.4vw, 18px)/1.35 var(--ddlc-font-
 #invite { background: var(--ddlc-ground); padding: 10px 14px; margin-bottom: 18px; border: 1px dashed var(--ddlc-line-live); }
 summary { cursor: pointer; font-weight: 700; }
 #link { width: 100%; margin: 8px 0; font: 12px var(--ddlc-font-data); }
-#status { font-size: clamp(21px, 5vw, 30px); margin: 6px 0 10px; letter-spacing: -.01em; }
+#status { font-size: clamp(21px, 5vw, 30px); margin: 6px 0 6px; letter-spacing: -.01em; }
+.clock { display: block; margin: 0 0 12px; font: 700 11px/1 var(--ddlc-font-data); letter-spacing: .12em; color: var(--ddlc-muted); }
+.clock.urgent { color: var(--ddlc-danger); }
+#map-towers .tower { transform-box: view-box; transform-origin: 0 0; transition: transform .22s ease-out; }
+#swap, #rematch { display: block; width: 100%; min-height: 42px; margin-top: 10px; }
+#rematch { margin-top: 16px; background: var(--ddlc-text); color: var(--ddlc-ground); box-shadow: 3px 3px var(--ddlc-line-live); }
+#orders button { font: 700 10px/1 var(--ddlc-font-data); letter-spacing: .06em; padding: 3px 7px; margin-inline-start: .5em; }
 .pips { display: flex; gap: 6px; margin: 0 0 14px; }
 .pips i { width: 22px; height: 5px; background: var(--ddlc-line); transform: skewX(-20deg); }
 .pips i.done { background: var(--ddlc-accent); }
@@ -166,10 +172,20 @@ summary { cursor: pointer; font-weight: 700; }
 .entry-marker text { dominant-baseline: central; }
 .fence text { font: bold 11px var(--ddlc-font-data); fill: var(--ddlc-text); stroke: var(--ddlc-ground); stroke-width: 2.5; paint-order: stroke; }
 .ghost { opacity: .68; }
-.bolt-base { fill: var(--ddlc-monika); stroke: var(--ddlc-ink); stroke-width: 1.5; }
+.bolt-base { fill: var(--ddlc-paper); stroke: var(--ddlc-ink); stroke-width: 2; }
+.cannon-base { fill: var(--ddlc-yuri); stroke: var(--ddlc-ink); stroke-width: 2; }
+.cannon-barrel { fill: var(--ddlc-ink); stroke: var(--ddlc-ink); stroke-width: 1; stroke-linejoin: round; }
+.cannon-muzzle { stroke: var(--ddlc-sayori); stroke-width: 2.4; stroke-linecap: round; }
+.frost-shot path, .spike-shot circle { fill: none; stroke-linecap: round; }
+.frost-shot path { stroke: var(--ddlc-sayori-eye); stroke-width: 2.5; }
+.frost-shot circle { fill: color-mix(in srgb, var(--ddlc-sayori-eye) 45%, transparent); stroke: var(--ddlc-sayori-eye); stroke-width: 2; }
+.spike-shot circle { stroke: var(--ddlc-jacket); stroke-width: 2.5; stroke-dasharray: 3 3; }
+.cannonball { fill: var(--ddlc-ink); stroke: var(--ddlc-sayori); stroke-width: 1.5; }
+.frozen { filter: saturate(.35) hue-rotate(165deg) brightness(1.1); }
+.siege { fill: none; stroke: var(--ddlc-danger); stroke-width: 2.5; stroke-dasharray: 4 4; }
 .bolt-bow, .bolt-string, .pulse-shot, .projectile { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.bolt-bow { stroke: var(--ddlc-ink); stroke-width: 3.5; }
-.bolt-string { stroke: var(--ddlc-paper); stroke-width: 1.5; }
+.bolt-bow { stroke: var(--ddlc-bow-shadow); stroke-width: 3; }
+.bolt-string { stroke: var(--ddlc-ink); stroke-width: 1.6; }
 .pulse-shot { stroke: var(--ddlc-accent); stroke-width: 3; }
 .projectile { stroke: var(--ddlc-text); stroke-width: 2.5; paint-order: stroke; animation: bolt-flight 70ms linear both; }
 .keep-hit { animation: keep-hit 160ms ease-out; }

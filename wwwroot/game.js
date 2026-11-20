@@ -9,12 +9,23 @@ const choices = {
   pulse: ['Руна', 'Бьёт всех в радиусе'],
   swarm: ['Стайка', 'Пять мелких слизней'],
   giant: ['Гигант', 'Один живучий слизень'],
-  smart: ['Умные слизни', 'Пять слизней в очках идут кратчайшим путём'],
+  smart: ['Умные слизни', 'Пять в очках идут кратчайшим путём'],
+  runner: ['Бегуны', 'Шесть быстрых, но хрупких'],
+  armored: ['Бронированные', 'Три медленных, держат удар'],
+  decoy: ['Приманка', 'Четыре слизня пойдут длинным путём'],
+  ranged: ['Дальнобойные', 'Два слизня с винтовками бьют по постройкам'],
+  apc: ['Бронетранспортёр', 'На середине пути высадит четырёх в балаклавах'],
   fence: ['Забор', 'Слизни остановятся, чтобы его сломать'],
+  cannon: ['Пушка', 'Медленно бьёт, зато больно'],
+  frost: ['Мороз', 'Замедляет всех в радиусе'],
+  spikes: ['Шипы', 'Ловушка на тропе, колет наступившего'],
 };
 let player, state, field, action, cell, replay;
 let seen = 0, sequence = 0, sending = false;
-const types = () => player.seat === 0 ? ['bolt', 'pulse', 'fence'] : ['swarm', 'giant', 'smart'];
+const onRoad = type => type === 'fence' || type === 'spikes';
+const types = () => player.seat === 0
+  ? ['bolt', 'pulse', 'cannon', 'frost', 'spikes', 'fence']
+  : ['swarm', 'giant', 'smart', 'runner', 'armored', 'decoy', 'ranged', 'apc'];
 const defending = () => player.seat === 0;
 const planning = () => state.joined && !state.done && !state.locked && !replay && !sending;
 const route = id => field.routes.get(id);
@@ -64,6 +75,10 @@ function makeField() {
   el('board').style.setProperty('--rows', height);
   el('board').style.aspectRatio = `${width} / ${height}`;
   el('map').setAttribute('viewBox', `0 0 ${width * tile} ${height * tile}`);
+  // Towers keep their own layer, so a turn can be eased by CSS instead of redrawn
+  el('map').innerHTML = `<g id="map-road">${road}</g><g id="map-markers">${markers}</g>` +
+    `<g id="map-route"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
+    `<g id="map-towers"></g><g id="map-mobs"></g><g id="map-shots"></g><g id="map-hits"></g>`;
   for (const id of defending() ? [...walls, ...fenceCells] : entries) {
     const button = document.createElement('button');
     const [x, y] = coords(id);
@@ -83,38 +98,66 @@ function aimAngle(x, y, target) {
   return Math.atan2(ty - y, tx - x) * 180 / Math.PI;
 }
 
-function tower({type, cell: id}, target) {
-  const [x, y] = point(id);
-  if (type !== 'bolt') return sprite('pulse', x, y, 31);
-  return `<g transform="translate(${x} ${y})">
-    <circle class="bolt-base" r="12"/>
-    <g class="bolt-aim" transform="rotate(${target ? aimAngle(x, y, target) : -40})">
-      <path class="bolt-bow" d="M-10 0H12M3-10Q13 0 3 10"/>
-      <path class="bolt-string" d="M3-10L-7 0 3 10"/>
-    </g></g>`;
+const turning = type => type === 'bolt' || type === 'cannon';
+
+const towerBody = type => type === 'bolt'
+  ? `<circle class="bolt-base" r="12"/><path class="bolt-bow" d="M-10 0H12M3-10Q13 0 3 10"/><path class="bolt-string" d="M3-10L-7 0 3 10"/>`
+  : `<circle class="cannon-base" r="12"/><path class="cannon-barrel" d="M-7-3.4h10l5 3.4-5 3.4H-7z"/><path class="cannon-muzzle" d="M8-4.4v8.8"/>`;
+
+const aimAt = (id, target) => target ? aimAngle(...point(id), target) : -40;
+const transformOf = (id, target) => `translate(${point(id)[0]}px, ${point(id)[1]}px) rotate(${aimAt(id, target)}deg)`;
+
+// Towers sit in their own layer: a new frame changes one transform, so CSS can ease the turn
+function syncTowers(towers, targets) {
+  const layer = el('map-towers');
+  const signature = towers.map(t => `${t.cell}:${t.type}`).join('|');
+  if (layer.dataset.signature !== signature) {
+    layer.dataset.signature = signature;
+    layer.innerHTML = towers.map(({type, cell: id}) => turning(type)
+      ? `<g class="tower" data-cell="${id}" style="transform: ${transformOf(id, targets.get(id))}">${towerBody(type)}</g>`
+      : sprite(type, ...point(id), 31)).join('');
+    return;
+  }
+  for (const node of layer.querySelectorAll('g.tower')) {
+    const id = Number(node.dataset.cell);
+    node.style.transform = transformOf(id, targets.get(id));
+  }
 }
 
 function shot(target, type) {
   const [x, y] = point(target.cell);
   const [tx, ty] = center(target.x, target.y);
+  const fly = `style="--flight:${Math.hypot(tx - x, ty - y)}px"`;
   if (type === 'pulse') {
     return `<g class="pulse-shot"><path d="M${x},${y}L${tx},${ty}"/><circle cx="${tx}" cy="${ty}" r="10"/></g>`;
   }
-  const distance = Math.hypot(tx - x, ty - y);
+  if (type === 'frost') {
+    return `<g class="frost-shot"><path d="M${x},${y}L${tx},${ty}"/><circle cx="${tx}" cy="${ty}" r="7"/></g>`;
+  }
+  if (type === 'spikes') {
+    return `<g class="spike-shot"><circle cx="${tx}" cy="${ty}" r="9"/></g>`;
+  }
+  if (type === 'cannon') {
+    return `<g transform="translate(${x} ${y}) rotate(${aimAngle(x, y, target)})"><circle class="projectile cannonball" ${fly} r="4"/></g>`;
+  }
   return `<g transform="translate(${x} ${y}) rotate(${aimAngle(x, y, target)})">
-    <path class="projectile" style="--flight:${distance}px" d="M-11 0H0M-4-3L0 0-4 3"/>
+    <path class="projectile" ${fly} d="M-11 0H0M-4-3L0 0-4 3"/>
   </g>`;
 }
 
 function drawBattle(frame, damage) {
-  const towers = (replay?.snapshot || state).towers;
-  const towerTypes = new Map(towers.map(t => [t.cell, t.type]));
+  const buildings = frame?.buildings ?? (replay?.snapshot || state).towers;
+  const towerTypes = new Map(buildings.map(t => [t.cell, t.type]));
   const shots = frame?.shots || [];
   const targets = new Map([...(frame?.aims || []), ...shots].map(t => [t.cell, t]));
   const [kx, ky] = point(field.keep);
   const preview = !replay && planning() && cell !== undefined;
+  // The pawn shows every way it may go; the smart slime walks the short way, the decoy the long one
+  const options = [route(cell), ...(field.alternates.get(cell) ?? [])];
+  const longest = options.reduce((best, path) => path.length > best.length ? path : best, options[0]);
+  const shown = action === 'smart' ? [options[0]] : action === 'decoy' ? [longest] : options;
   const routePreview = preview && !defending()
-    ? polyline(route(cell), 'route-preview') + (action === 'smart' ? '' : field.alternates.get(cell).map(p => polyline(p, 'route-preview alternate')).join('')) : '';
+    ? shown.map(path => polyline(path, path === options[0] ? 'route-preview' : 'route-preview alternate')).join('') : '';
   const fences = (frame?.fences ?? state.fences).map(({cell: id, hp}) => {
     const [x, y] = point(id);
     return `<g class="fence">${sprite('fence', x, y, 29)}<text x="${x + 9}" y="${y - 9}">${hp}</text></g>`;
@@ -123,10 +166,33 @@ function drawBattle(frame, damage) {
   const keep = `<g class="${damage ? 'keep-hit' : ''}">${sprite('keep', kx, ky, 44)}</g>`;
   const hits = damage ? `<text class="damage" x="${Math.max(18, Math.min(kx, state.width * tile - 18))}" y="${Math.max(15, ky - 14)}">−${damage}</text>` : '';
   el('hp').textContent = frame?.hp ?? state.hp;
-  el('map').innerHTML = field.road + routePreview + field.markers + keep + ghost +
-    towers.map(t => tower(t, targets.get(t.cell))).join('') + fences +
-    (frame?.mobs || []).map(m => sprite(m.giant ? 'giant' : m.smart ? 'smart' : 'swarm', ...center(m.x, m.y), m.giant ? 35 : 25)).join('') +
-    shots.map(t => shot(t, towerTypes.get(t.cell))).join('') + hits;
+  el('map-route').innerHTML = routePreview;
+  el('map-ghost').innerHTML = ghost;
+  el('map-keep').innerHTML = keep;
+  el('map-fences').innerHTML = fences;
+  syncTowers(buildings, targets);
+  el('map-mobs').innerHTML = (frame?.mobs || []).map(m => {
+    const glyph = sprite(m.kind ?? 'swarm', ...center(m.x, m.y), m.kind === 'giant' ? 35 : m.kind === 'apc' ? 31 : 25);
+    return m.frozen ? `<g class="frozen">${glyph}</g>` : glyph;
+  }).join('');
+  el('map-shots').innerHTML = shots.map(t => shot(t, towerTypes.get(t.cell))).join('');
+  el('map-hits').innerHTML = hits + (frame?.siege || []).map(({cell: id}) => {
+    const [sx, sy] = point(id);
+    return `<circle class="siege" cx="${sx}" cy="${sy}" r="13"/>`;
+  }).join('');
+}
+
+let clock = null;
+const remaining = () => clock ? Math.max(0, clock.left - Math.floor((Date.now() - clock.at) / 1000)) : 0;
+
+function paintClock() {
+  const node = el('clock');
+  const show = state && state.joined && !state.done && !state.locked && !replay;
+  node.hidden = !show;
+  if (!show) return;
+  const left = remaining();
+  node.textContent = left > 0 ? `на размышление ${left} с` : 'время вышло';
+  node.classList.toggle('urgent', left <= 5);
 }
 
 function render() {
@@ -141,6 +207,9 @@ function render() {
     : `Волна ${last + 1} из ${waves} · подготовка`;
   const round = replay?.snapshot.last ?? last;
   el('pips').innerHTML = Array.from({length: waves}, (_, i) => `<i class="${i < round ? 'done' : ''}${i === round && !done ? ' now' : ''}"></i>`).join('');
+  paintClock();
+  el('swap').hidden = !(joined && !done && last === 0 && !locked && towers.length === 0 && fences.length === 0);
+  el('rematch').hidden = !(joined && done);
   el('field').hidden = false;
   el('again').hidden = !done || !!replay;
   el('planning').hidden = !joined || done || !!replay;
@@ -149,7 +218,7 @@ function render() {
   if (defending() && occupied.has(cell)) cell = undefined;
   for (const button of el('cells').children) {
     const id = Number(button.dataset.cell);
-    button.hidden = defending() && (occupied.has(id) || (action === 'fence') !== (button.dataset.kind === 'fence')); 
+    button.hidden = defending() && (occupied.has(id) || onRoad(action) !== (button.dataset.kind === 'fence'));
     button.disabled = !editable || button.hidden;
     button.setAttribute('aria-pressed', String(editable && cell === id));
   }
@@ -160,8 +229,8 @@ function render() {
     button.setAttribute('aria-pressed', String(action === type));
   }
   el('hint').textContent = !editable ? '' : cell === undefined
-    ? (defending() ? (action === 'fence' ? 'Выбери отмеченную клетку на тропе' : 'Выбери стену у тропы или переключись на забор') : 'Выбери вход, чтобы увидеть маршруты')
-    : (defending() ? `Выбрана клетка: ${coords(cell).map(value => value + 1).join(', ')}` : `${entry(cell)} · ${action === 'smart' ? 'кратчайший путь' : 'выбор ветки 50/50'}`);
+    ? (defending() ? (onRoad(action) ? 'Выбери отмеченную клетку на тропе' : 'Выбери стену у тропы или перейди на забор и шипы') : 'Выбери вход, чтобы увидеть маршруты')
+    : (defending() ? `Выбрана клетка: ${coords(cell).map(value => value + 1).join(', ')}` : `${entry(cell)} · ${action === 'smart' ? 'кратчайший путь' : action === 'decoy' ? 'длинный путь' : 'выбор ветки 50/50'}`);
   el('hint').hidden = !el('hint').textContent;
   el('commit').innerHTML = action ? `${defending() ? 'Построить' : 'Добавить в волну'} · ${fare(prices[action])}`
     : (defending() ? 'Выбери постройку' : 'Выбери группу');
@@ -169,9 +238,15 @@ function render() {
   el('ready').textContent = locked ? 'Готовность подтверждена' : waitingForOrders ? 'Добавь группу, чтобы начать' : 'Готов к волне';
   el('ready').disabled = !editable || waitingForOrders;
   el('orders').hidden = orders.length === 0;
-  el('orders').replaceChildren(...orders.map(({type, cell: id}) => {
+  el('orders').replaceChildren(...orders.map(({type, cell: id}, index) => {
     const li = document.createElement('li');
-    li.textContent = `${choices[type][0]} · ${entry(id)}`;
+    li.append(`${choices[type][0]} · ${entry(id)} `);
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.textContent = 'Отменить';
+    undo.disabled = !editable;
+    undo.onclick = () => { if (!undo.disabled) move('cancel', index); };
+    li.append(undo);
     return li;
   }));
   if (!replay) drawBattle();
@@ -218,6 +293,12 @@ function accept(next) {
   if (!Number.isInteger(next.width) || !Array.isArray(next.paths)) throw Error('Сервер не прислал поле дуэли');
   const previous = state;
   state = next;
+  if (Number.isInteger(next.seat) && next.seat !== player?.seat) {
+    player.seat = next.seat;
+    sessionStorage.setItem(`duel:${player.id}`, JSON.stringify(player));
+    buildActions();
+  }
+  clock = {left: Number.isFinite(next.secondsLeft) ? next.secondsLeft : 0, at: Date.now()};
   if (!field) makeField();
   if (next.last !== previous?.last || next.locked) action = cell = undefined;
   play(previous);
@@ -254,6 +335,26 @@ async function move(type, target) {
   }
 }
 
+// The side can change mid-room, so the order buttons are rebuilt whenever the seat moves
+function buildActions() {
+  el('role').textContent = defending() ? 'ЗАЩИТНИК' : 'АТАКУЮЩИЙ';
+  el('actions').replaceChildren();
+  action = cell = undefined;
+  for (const type of types()) {
+    const [label, hint] = choices[type];
+    const button = document.createElement('button');
+    button.dataset.action = type;
+    button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32">${sprite(type, 16, 16, 32)}</svg>${label} <b></b><span>${hint}</span>`;
+    button.onclick = () => {
+      if (defending() && onRoad(action) !== onRoad(type)) cell = undefined;
+      action = type;
+      render();
+    };
+    button.disabled = true;
+    el('actions').append(button);
+  }
+}
+
 async function enter() {
   el('start').disabled = true;
   el('error').textContent = '';
@@ -267,20 +368,7 @@ async function enter() {
     url.searchParams.set('join', '1');
     el('link').value = url.href;
     el('invite').open = !room;
-    el('role').textContent = defending() ? 'ЗАЩИТНИК' : 'АТАКУЮЩИЙ';
-    for (const type of types()) {
-      const [label, hint] = choices[type];
-      const button = document.createElement('button');
-      button.dataset.action = type;
-      button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32">${sprite(type, 16, 16, 32)}</svg>${label} <b></b><span>${hint}</span>`;
-      button.onclick = () => {
-        if (defending() && (action === 'fence') !== (type === 'fence')) cell = undefined;
-        action = type;
-        render();
-      };
-      button.disabled = true;
-      el('actions').append(button);
-    }
+    buildActions();
     el('game').hidden = false;
     el('cover').hidden = true;
     el('status').textContent = 'Загружаем поле';
@@ -306,6 +394,8 @@ async function enter() {
   }
 }
 
+el('swap').onclick = () => { if (!el('swap').hidden) move('swap', 0); };
+el('rematch').onclick = () => { if (!el('rematch').hidden) move('rematch', 0); };
 el('commit').onclick = () => { if (!el('commit').disabled) move(action, cell); };
 el('ready').onclick = () => { if (!el('ready').disabled) move('ready', 0); };
 el('copy').onclick = async () => {

@@ -16,9 +16,11 @@ if (!string.IsNullOrEmpty(databaseFile) && Path.GetDirectoryName(Path.GetFullPat
     Directory.CreateDirectory(folder);
 
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<ConcurrentDictionary<string, Duel>>();
+builder.Services.AddHostedService<WaveClock>();
 builder.Services.AddDbContext<DuelDb>(options => options.UseSqlite(connection));
 var app = builder.Build();
-var rooms = new ConcurrentDictionary<string, Duel>();
+var rooms = app.Services.GetRequiredService<ConcurrentDictionary<string, Duel>>();
 using (var scope = app.Services.CreateScope()) {
     try {
         scope.ServiceProvider.GetRequiredService<DuelDb>().Database.EnsureCreated();
@@ -62,10 +64,11 @@ app.MapPost("/room/{id}/move", async (string id, Move m, IHubContext<Bell> bell,
         int i = g.Seat(m.Key);
         if (i < 0) return Results.Unauthorized();
         if (g.Apply(i, m) is {} rejected) return rejected;
-        state = g.View(i);
+        // A swap moves the key to the other seat, so the answer is built for where the key is now
+        state = g.View(g.Seat(m.Key));
         finished = g.TakeResult();
     }
-    if (finished is not null) await Save(id, finished);
+    if (finished is not null) await Storage.SaveAsync(scopes, app.Logger, id, finished);
     await bell.Clients.Group(id).SendAsync("changed");
     return Results.Ok(state);
 });
@@ -102,34 +105,6 @@ app.MapGet("/matches", async (DuelDb db, int? take) => {
     return Results.Ok(recent);
 });
 app.Run();
-
-async Task Save(string roomId, Duel.ResultWrite finished) {
-    try {
-        await using var scope = app.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<DuelDb>();
-        db.Matches.Add(new MatchRow {
-            Id = finished.Id,
-            RoomId = roomId,
-            StartedAt = finished.StartedAt,
-            FinishedAt = finished.FinishedAt,
-            WavesPlayed = finished.WavesPlayed,
-            HeartsLeft = finished.HeartsLeft,
-            Winner = finished.Winner,
-            Survivor = finished.Survivor,
-            Waves = finished.Log.Select(wave => new WaveRow {
-                Number = wave.Number,
-                HeartsAfter = wave.HeartsAfter,
-                Damage = wave.Damage,
-                Slimes = wave.Slimes,
-                SlimesKilled = wave.SlimesKilled,
-                Groups = wave.Groups
-            }).ToList()
-        });
-        await db.SaveChangesAsync();
-    } catch (Exception error) {
-        app.Logger.LogError(error, "Match {Match} was not saved", finished.Id);
-    }
-}
 
 public record Ticket(string Key);
 public record Move(string? Key, int Wave, string? Action,

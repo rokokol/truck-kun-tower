@@ -43,6 +43,7 @@
       <small>ПОЛЕВОЙ ДНЕВНИК / <span id="role"></span></small>
       <h2 id="status" aria-live="polite"></h2>
       <span class="pips" id="pips" aria-hidden="true"></span>
+      <small id="clock" class="clock" aria-live="off"></small>
       <div id="field" hidden>
         <div class="stats">
           <span class="chip">Крепость <svg class="icon heart" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#heart"/></svg><b id="hp"></b></span>
@@ -62,7 +63,9 @@
         <button id="commit" disabled></button>
         <ul id="orders" aria-label="Группы на эту волну" hidden></ul>
         <button id="ready" disabled>Готов к волне</button>
+        <button id="swap" type="button" hidden>Поменяться сторонами</button>
       </section>
+      <button id="rematch" type="button" hidden>Начать следующий раунд</button>
       <a hidden id="again" href="/">Создать новую дуэль</a>
     </section>
     <p id="error" role="alert"></p>

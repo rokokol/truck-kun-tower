@@ -8,3 +8,7 @@ obj/
 *.user
 *.suo
 appsettings.Local.json
+*.db
+*.db-shm
+*.db-wal
+data/

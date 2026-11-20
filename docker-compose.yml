@@ -1,0 +1,15 @@
+services:
+  tower:
+    build: .
+    image: truck-kun-tower
+    container_name: truck-kun-tower
+    ports:
+      - "5184:8080"
+    environment:
+      ConnectionStrings__Default: "Data Source=/data/duel.db"
+    volumes:
+      - tower-data:/data
+    restart: unless-stopped
+
+volumes:
+  tower-data:

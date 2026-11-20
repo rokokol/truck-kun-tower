@@ -21,7 +21,7 @@ const choices = {
   spikes: ['Шипы', 'Ловушка на тропе, колет наступившего'],
 };
 let player, state, field, action, cell, replay, room;
-let settings, hubConnection;
+let hubConnection;
 let generation = 0;
 let seen = 0, sequence = 0, sending = false;
 const onRoad = type => type === 'fence' || type === 'spikes';
@@ -160,10 +160,11 @@ function drawBattle(frame, damage) {
   const [kx, ky] = point(field.keep);
   const preview = !replay && planning() && cell !== undefined;
   // The pawn shows every way it may go; the smart slime walks the short way, the decoy the long one
-  const options = [route(cell), ...(field.alternates.get(cell) ?? [])];
-  const longest = options.reduce((best, path) => path.length > best.length ? path : best, options[0]);
-  const shown = action === 'smart' ? [options[0]] : action === 'decoy' ? [longest] : options;
-  const routePreview = preview && !defending()
+  const options = cell === undefined ? []
+    : [route(cell), ...(field.alternates.get(cell) ?? [])].filter(Boolean);
+  const longest = options.length ? options.reduce((best, path) => path.length > best.length ? path : best) : null;
+  const shown = action === 'smart' ? options.slice(0, 1) : action === 'decoy' && longest ? [longest] : options;
+  const routePreview = preview && !defending() && shown.length
     ? shown.map(path => polyline(path, path === options[0] ? 'route-preview' : 'route-preview alternate')).join('') : '';
   const fences = (frame?.fences ?? state.fences).map(({cell: id, hp}) => {
     const [x, y] = point(id);
@@ -215,7 +216,7 @@ function render() {
   const round = replay?.snapshot.last ?? last;
   el('pips').innerHTML = Array.from({length: waves}, (_, i) => `<i class="${i < round ? 'done' : ''}${i === round && !done ? ' now' : ''}"></i>`).join('');
   paintClock();
-  el('swap').hidden = !(joined && !done && last === 0 && !locked && towers.length === 0 && fences.length === 0);
+  el('swap').hidden = !(joined && !done && last === 0 && !locked && towers.length === 0 && state.fences.length === 0);
   el('rematch').hidden = !(joined && done);
   el('field').hidden = false;
   el('again').hidden = !done || !!replay;
@@ -311,10 +312,7 @@ function accept(next) {
   clock = {left: Number.isFinite(next.secondsLeft) ? next.secondsLeft : 0, at: Date.now()};
   if (!field) makeField();
   if (next.last !== previous?.last || next.locked) action = cell = undefined;
-  if (next.done) {
-    telegram.confirmClose(false);
-    telegram.set(currentKey, null);
-  }
+  if (next.done) store.set(currentKey, null);
   play(previous);
   render();
 }
@@ -338,7 +336,6 @@ async function move(type, target) {
     if (type !== 'ready') {
       if (defending()) action = cell = undefined;
       sounds.play('coin');
-      telegram.impact('light');
     }
     accept(next);
   } catch (error) {
@@ -379,21 +376,18 @@ async function alive(player, allowDone = false) {
   }
 }
 
-async function loadConfig() {
-  if (!settings) settings = fetch('/config').then(response => response.ok ? response.json() : null).catch(() => null);
-  return settings;
-}
+// A ticket lives in the browser itself: no Telegram, no server-side session
+const store = {
+  async get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  async set(key, value) {
+    try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {}
+  },
+};
 
 async function paintInvite() {
   const web = new URL(location.origin + location.pathname);
   web.search = new URLSearchParams({room, join: '1'});
-  let link = web.href;
-  if (telegram.live) {
-    const bot = (await loadConfig())?.telegram;
-    link = telegram.buildInvite(bot?.inviteBase, room) || link;
-    el('share').hidden = false;
-  }
-  el('link').value = link;
+  el('link').value = web.href;
 }
 
 async function enter(saved) {
@@ -404,14 +398,13 @@ async function enter(saved) {
     let stored = saved;
     const joining = Boolean(room);
     if (!stored && room) {
-      try { stored = JSON.parse(await telegram.get(ticketKey(room))); } catch {}
+      try { stored = JSON.parse(await store.get(ticketKey(room))); } catch {}
     }
     player = stored ?? await post(joining ? `/room/${encodeURIComponent(room)}/join` : '/room', {});
     const fresh = !stored && !joining;
     room = player.id;
-    await telegram.set(ticketKey(room), JSON.stringify(player));
-    await telegram.set(currentKey, room);
-    telegram.confirmClose(true);
+    await store.set(ticketKey(room), JSON.stringify(player));
+    await store.set(currentKey, room);
     const url = new URL(location.href);
     url.search = new URLSearchParams({room});
     history.replaceState(null, '', url);
@@ -424,7 +417,6 @@ async function enter(saved) {
     } catch (error) {
       el('game').hidden = true;
       el('cover').hidden = false;
-      telegram.confirmClose(false);
       throw error;
     }
     el('invite').open = fresh;
@@ -456,7 +448,7 @@ async function enter(saved) {
 function restart() {
   ++generation;
   ++sequence;
-  telegram.set(currentKey, null);
+  store.set(currentKey, null);
   hubConnection?.stop().catch(() => {});
   hubConnection = undefined;
   player = state = field = action = cell = replay = undefined;
@@ -476,7 +468,6 @@ function restart() {
   el('map').innerHTML = '';
   el('status').textContent = '';
   el('clock').hidden = true;
-  telegram.confirmClose(false);
   const url = new URL(location.href);
   url.search = '';
   history.replaceState(null, '', url);
@@ -486,49 +477,44 @@ el('swap').onclick = () => { if (!el('swap').hidden) move('swap', 0); };
 el('rematch').onclick = () => { if (!el('rematch').hidden) move('rematch', 0); };
 
 el('commit').onclick = () => { if (!el('commit').disabled) move(action, cell); };
-el('ready').onclick = () => { if (!el('ready').disabled) { telegram.impact('medium'); move('ready', 0); } };
+el('ready').onclick = () => { if (!el('ready').disabled) move('ready', 0); };
 el('copy').onclick = async () => {
-  const copied = await telegram.copy(el('link').value);
-  if (!copied) el('link').select();
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(el('link').value);
+    copied = true;
+  } catch { el('link').select(); }
   el('copy').textContent = copied ? 'Ссылка скопирована' : 'Выделите ссылку';
   setTimeout(() => { el('copy').textContent = 'Скопировать ссылку'; }, 2400);
-};
-el('share').onclick = () => {
-  if (!telegram.share(el('link').value,
-    'Дуэль в Truck-kun Tower: я держу крепость, ты ведёшь слизней. Открывай:')) el('copy').click();
 };
 el('start').onclick = () => enter();
 el('again').addEventListener('click', event => { event.preventDefault(); restart(); });
 
 async function boot() {
-  telegram.init();
-  room = telegram.startParam();
+  const query = new URLSearchParams(location.search);
+  room = query.get('room');
   if (room) {
-    const raw = await telegram.get(ticketKey(room));
-    let stored;
-    try { stored = JSON.parse(raw); } catch {}
-    if (stored && await alive(stored, true)) {
-      if (await enter(stored)) return;
-      el('start').textContent = 'Продолжить дуэль';
-      return;
-    }
-    if (raw) await telegram.set(ticketKey(room), null);
+    // An invite link opens the ticket this browser already holds for that room
+    try {
+      const stored = JSON.parse(await store.get(ticketKey(room)));
+      if (stored && await alive(stored, true)) {
+        if (await enter(stored)) return;
+        el('start').textContent = 'Продолжить дуэль';
+        return;
+      }
+    } catch {}
     el('start').textContent = 'Вступить в дуэль';
     return;
   }
-
-  const current = await telegram.get(currentKey);
+  const current = await store.get(currentKey);
   if (!current) return;
-  const raw = await telegram.get(ticketKey(current));
-  let stored;
-  try { stored = JSON.parse(raw); } catch {}
-  if (!stored || !await alive(stored)) {
-    await telegram.set(currentKey, null);
-    if (raw) await telegram.set(ticketKey(current), null);
-    return;
-  }
-  room = current;
-  if (await enter(stored)) return;
-  el('start').textContent = 'Продолжить дуэль';
+  try {
+    const stored = JSON.parse(await store.get(ticketKey(current)));
+    if (stored && await alive(stored)) {
+      room = current;
+      if (await enter(stored)) return;
+      el('start').textContent = 'Продолжить дуэль';
+    }
+  } catch {}
 }
 boot();

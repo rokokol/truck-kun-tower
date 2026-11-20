@@ -7,10 +7,6 @@ services:
     environment:
       ASPNETCORE_URLS: http://127.0.0.1:5184
       ConnectionStrings__Default: "Data Source=/data/duel.db"
-      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-}
-      Telegram__PublicUrl: ${TELEGRAM_PUBLIC_URL:-}
-      Telegram__AppLink: ${TELEGRAM_APP_LINK:-}
-      Telegram__ApiAddress: ${TELEGRAM_API_ADDRESS:-}
     volumes:
       - tower-data:/data
     restart: unless-stopped

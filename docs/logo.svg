@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Truck-kun Tower — horizontal lockup for the header.
+  The keep is the same figure as wwwroot/actors.svg#keep; its colours are written out as
+  literal hex because a standalone SVG cannot read the app's palette variables.
+  Both words sit on one baseline, y=138, and so do the keep's feet. No frame, no dot grid,
+  no shadow. The wordmark is live text: it needs 'Mya Nunito' (italic 900) and
+  'Departure Mono', which the app loads with duel.css and vendor/ddlc/ddlc-ui.css. Inline
+  this file into that page, or load those two faces before using it as an <img>.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="160" viewBox="0 0 560 160" role="img" aria-label="Truck-kun Tower">
+  <title>Truck-kun Tower</title>
+  <g id="keep" transform="translate(28 43.55) scale(2.19643)">
+    <path d="M17-9V19" stroke="#222222" stroke-width="3" stroke-linecap="round"/>
+    <path d="M17-8h18l-5 5 5 5H17z" fill="#DD77BB" stroke="#222222" stroke-width="1.6"/>
+    <path d="M20-4h7" stroke="#FFFFFF"/>
+    <path d="M6 42l3-22-3-2v-7h5v4h5v-4h6v4h5v-4h5v8l-3 2 3 21z" fill="#e6b687" stroke="#372d38" stroke-width="2"/>
+    <path d="M7 38h24v4H7z" fill="#b18372"/>
+    <path d="M12 29v-5q2-4 4 0v5zm10 0v-5q2-4 4 0v5z" fill="#343549"/>
+    <path d="M16 32q3 4 6 0" fill="none" stroke="#584153" stroke-width="2"/>
+  </g>
+  <text x="118" y="138" fill="#222222" font-family="'Mya Nunito', Nunito, 'Segoe UI', Roboto, sans-serif" font-size="60" font-style="italic" font-weight="900" letter-spacing="-0.5">Truck-kun</text>
+  <text x="429" y="138" fill="#BB5599" font-family="'Departure Mono', ui-monospace, monospace" font-size="24" letter-spacing="4.5">TOWER</text>
+</svg>

@@ -21,11 +21,11 @@ Two players share one maze: one defends the keep, the other buys slimes and pick
 - A finished match reaches SQLite after the room lock is released, never inside it
 - `wwwroot/actors.svg` takes its colours from DDLC theme variables; a page that draws those sprites without the variables shows black silhouettes
 
-## Telegram
+## Web app
 
-- `TelegramBot.cs` validates `initData` with the bot token and answers `GET /config`; `wwwroot/telegram.js` is the only file that talks to the Telegram SDK, and it falls back to plain storage in a normal browser
-- A player is identified by their Telegram id, so the same person keeps their side after the webview reloads; a shared ticket lives under `duel:<room>` in the Mini App storage
-- Settings arrive as `Telegram__BotToken`, `Telegram__PublicUrl`, `Telegram__AppLink` and `Telegram__ApiAddress`; the token never reaches the browser
+- A player is a browser tab, not an account: the ticket lives in `localStorage` under `duel:<room>`, and `duel:current` remembers the last room, so a reload returns to the same seat
+- The invite is a plain link with `?room=`; nothing depends on a messenger or a native shell
+- The game answers both plain HTTP behind the proxy and HTTPS on `8443`; keep both in mind when a change touches URLs or cookies
 
 ## Deploy
 

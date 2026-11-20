@@ -17,6 +17,8 @@ if (!string.IsNullOrEmpty(databaseFile) && Path.GetDirectoryName(Path.GetFullPat
 
 builder.Services.AddSignalR();
 builder.Services.AddDbContext<DuelDb>(options => options.UseSqlite(connection));
+builder.Services.AddSingleton<TelegramBot>();
+builder.Services.AddHostedService(services => services.GetRequiredService<TelegramBot>());
 var app = builder.Build();
 var rooms = new ConcurrentDictionary<string, Duel>();
 using (var scope = app.Services.CreateScope()) {
@@ -37,6 +39,8 @@ app.UseStaticFiles(new StaticFileOptions {
     }
 });
 app.MapHub<Bell>("/bell");
+// The browser asks where the Telegram app lives; the bot token never leaves the server
+app.MapGet("/config", (TelegramBot bot) => Results.Ok(new { telegram = bot.PublicSettings }));
 app.MapPost("/room", () => {
     var id = Guid.NewGuid().ToString("N");
     var game = rooms[id] = new Duel();

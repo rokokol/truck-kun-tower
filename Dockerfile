@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY truck-kun-tower.csproj ./
 RUN dotnet restore
-COPY Program.cs Duel.cs Maze.cs Data.cs ./
+COPY Program.cs TelegramBot.cs Duel.cs Maze.cs Data.cs ./
 COPY wwwroot ./wwwroot
 RUN dotnet publish -c Release -o /app --no-restore
 

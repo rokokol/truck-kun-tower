@@ -24,8 +24,11 @@ const servedPreview = join(root, 'wwwroot/og.png');
 // the frame takes the artwork's own paper colour: a crop would cut the drawn wordmark on the left
 // or the keep on the right, and a stretch would show a longer truck than the drawing has.
 const targets = [
-  { out: banner, width: 640, height: 360, keep: 'the banner' },
-  { out: preview, width: 1200, height: 630, keep: 'the link preview' },
+  // The banner sits on a light bot profile, so the artwork's own paper disappears into it
+  { out: banner, width: 640, height: 360, keep: 'the banner', bars: 'artwork' },
+  // A share card is shown on whatever ground the messenger uses, light or dark: black bars frame
+  // the picture on both instead of glowing white on the dark one
+  { out: preview, width: 1200, height: 630, keep: 'the link preview', bars: '#000000' },
 ];
 
 function fail(problem) {
@@ -56,14 +59,15 @@ if (!/^s?rgb/.test(paper)) fail(`cannot read the artwork's paper colour, got ${p
 for (const target of targets) {
   const fitted = Math.round(target.width * source.height / source.width);
   if (fitted > target.height) fail(`${target.keep} cannot hold the whole artwork at ${target.width} wide`);
+  const bars = target.bars === 'artwork' ? paper : target.bars;
   magick(art, '-filter', 'Lanczos', '-resize', `${target.width}x${fitted}`,
-    '-background', paper, '-gravity', 'center', '-extent', `${target.width}x${target.height}`,
+    '-background', bars, '-gravity', 'center', '-extent', `${target.width}x${target.height}`,
     '-strip', '-colors', '256', '-depth', '8', target.out);
   const made = probe(target.out);
   if (made.width !== target.width || made.height !== target.height)
     fail(`${target.keep} came out ${made.width}x${made.height}, expected ${target.width}x${target.height}`);
   console.log(`banner: ${target.out.replace(root, '')} ${made.width}x${made.height} ${Math.round(made.bytes / 1024)} KB ` +
-    `from the artwork fitted to ${target.width}x${fitted} on ${paper}`);
+    `from the artwork fitted to ${target.width}x${fitted} on ${bars}`);
 }
 
 // The page names /og.png, and the container serves wwwroot/, so the preview travels there too

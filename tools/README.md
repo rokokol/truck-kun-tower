@@ -37,7 +37,7 @@ node tools/banner.mjs
 ```
 
 The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's
-width and the rest of the frame takes the artwork's own paper colour, read from its top-left pixel.
+The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's width. A crop would cut the drawn wordmark or the keep, and a stretch would show a longer truck than the drawing has. The banner fills the margin with the artwork's own paper colour, read from its top-left pixel; the link preview fills it with black, so the frame holds on a messenger's light and dark ground alike
 A crop would cut the drawn wordmark or the keep, and a stretch would show a longer truck than the
 drawing has
 

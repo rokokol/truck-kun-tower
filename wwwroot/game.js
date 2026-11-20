@@ -27,7 +27,7 @@ const choices = {
 let roomId = null, seatToken = null;
 let state, field, action, cell, replay;
 let generation = 0;
-let seen = 0, sequence = 0, sending = false, timer = null;
+let seen = 0, sequence = 0, sending = false, timer = null, quiet = 0;
 
 const onRoad = type => type === 'fence' || type === 'spikes';
 const defending = () => state?.seat === 0;
@@ -459,8 +459,16 @@ async function open(detail = {}) {
 function tick() {
   if (!roomId) return;
   paintClock();
-  // The socket carries every change; the poll is the fallback when it never came up
-  if (!Tower.connected()) sync();
+  // The socket carries every change; the poll is the fallback when it never came up.
+  // While it is up, a rare reconcile keeps a broadcast that went missing from
+  // freezing the board — a silent stale maze is worse than one spare request
+  if (!Tower.connected()) {
+    quiet = 0;
+    sync();
+  } else if (++quiet >= 8) {
+    quiet = 0;
+    sync();
+  }
 }
 
 function leave(message) {
@@ -499,6 +507,9 @@ el('copy').onclick = async () => {
 };
 
 Tower.on('Changed', () => { if (roomId && !sending) sync(); });
+// Joining the room is not instant: whatever the opponent did meanwhile was broadcast
+// before we were in the group, so the board catches up right after the join
+Tower.on('RoomJoined', () => { if (roomId && !sending) sync(); });
 
 window.addEventListener('tower:screen', event => {
   const detail = event.detail ?? {};

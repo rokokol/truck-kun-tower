@@ -119,6 +119,9 @@
   async function join() {
     if (!hub || hub.state !== 'Connected' || !watching) return;
     await hub.invoke('JoinRoom', String(watching.roomId), watching.seatToken ?? null);
+    // Everything that changed before the server put us in the group was broadcast
+    // into the void, so the board reads the state again instead of trusting the gap
+    emit('RoomJoined', watching.roomId);
   }
 
   async function watchRoom(roomId, seatToken) {

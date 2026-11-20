@@ -42,6 +42,7 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 
 - Screens: `#auth` and `#lobby` are Alpine components in `wwwroot/lobby.js`, the board stays the hand-drawn SVG of `wwwroot/game.js`. Neither script draws the other's screen: they meet on the `tower:screen` event
 - The invite is a plain link with `?room=`; nothing depends on a messenger or a native shell
+- `?v=@hash@` in `index.html` turns into the hash of the four assets while the image builds: Cloudflare keeps a script for four hours whatever the origin's cache headers say, so a page must point at a new address when a file changes, and a hand-bumped number is a step somebody forgets
 - The hub at `/bell` carries the room state, friend requests, invitations, swap requests and presence. The JWT travels as `access_token` in the query, the guest seat token as the second argument of `JoinRoom`
 - The game answers both plain HTTP behind the proxy and HTTPS on `8443`; keep both in mind when a change touches URLs or cookies
 

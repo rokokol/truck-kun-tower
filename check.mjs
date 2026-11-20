@@ -307,6 +307,10 @@ assert.equal((await call('/api/friends', { token: anna.token })).length, 0);
 await call('/api/users/me', { method: 'DELETE', token: cath.token, body: { password: 'wrong-pass' }, expect: 401 });
 await call('/api/users/me', { method: 'DELETE', token: cath.token, body: { password: cath.password }, expect: 204 });
 await call(`/api/users/${cath.id}`, { expect: 404 });
+// The run leaves no accounts behind, so the check can be repeated against one database
+for (const who of [anna, boris]) await call('/api/users/me', {
+  method: 'DELETE', token: who.token, body: { password: who.password }, expect: 204
+});
 pass('a friend can be removed and an account deleted after a password check');
 
 console.log(`\n${passed} groups of checks passed`);

@@ -18,14 +18,35 @@ The script plays three empty waves with two guest seats and no account, because 
 
 It records that replay and composes the frame itself, with a brand panel on the left and the board with its status line and wave pips on the right, so every run lays the same frame out the same way
 
+The frames are English, because the art and the caption the GIF travels with are English; `--lang ru` records the Russian page instead
+
 A run fails with a non-zero exit and one line naming the cause when a tower cannot be bought, when the page never starts a replay, when the wave is too long to hold its pace in a 9-10 s loop, or when ffprobe reports a size other than 640×360. The GIF in `docs/` is left as it was, because the new one only replaces it after it passes
 
 | Option | Effect |
 | --- | --- |
 | `--url <url>` | record another game |
 | `--out <file>` | write the GIF elsewhere |
+| `--lang <code>` | `en` or `ru`, the language of the frames (default `en`) |
 | `--frames <dir>` | keep the PNG frames in a new, empty directory |
 | `--keep-frames` | keep the frames in a temporary directory and print its path |
+
+## Screenshots
+
+`docs/cover.png`, `docs/planning.png` and `docs/battle.png` come from one command, so they never drift from the interface they show
+
+```sh
+node tools/shots.mjs
+```
+
+It opens the live site, plays a real duel between two guest seats, buys a frost tower off the road and a fence on its offered cell, then lets the first wave run and shoots the three states: the sign-in card, the planning screen and the fight. Like the GIF it reads `PLAYWRIGHT_CORE` and `CHROMIUM`, and `--url` names another game
+
+Each picture is written beside its final name and moved over it only when all three exist, so a run that dies halfway leaves the previous set in place. A run fails when the board never offers the frost tower, when the maze has no cell beside its road or when the page raises an error
+
+| Option | Effect |
+| --- | --- |
+| `--url <url>` | shoot another game |
+| `--lang <code>` | `en` or `ru`, the language of the screenshots (default `en`) |
+| `--out <dir>` | write the screenshots elsewhere |
 
 ## Banner and link preview
 

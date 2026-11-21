@@ -16,6 +16,7 @@ const USAGE = `node tools/demo-gif.mjs [options]
 
   --url <url>     record a game other than https://tower.rokokol.art:8443
   --out <file>    write the GIF somewhere other than docs/telegram-demo.gif
+  --lang <code>   ru or en, the language the frames are taken in (default en)
   --frames <dir>  keep the PNG frames in this directory
   --keep-frames   keep the frames in a temporary directory and print its path
   -h, --help      this text`;
@@ -45,7 +46,12 @@ const READY_SECONDS = 20;
 const ATTACK = ['swarm', 'giant', 'smart', 'runner', 'armored', 'ranged', 'apc'];
 const RECORDED_WAVE = 4;
 
-const TAGLINES = ['Защитник держит лабиринт', 'Атакующий ведёт слизней ко входу'];
+// The panel speaks the language of the frames: its taglines are the script's own copy, while
+// everything in the board beside them comes from the page
+const TAGLINES = {
+  en: ['The defender holds the maze', 'The attacker sends slimes to the gate'],
+  ru: ['Защитник держит лабиринт', 'Атакующий ведёт слизней ко входу'],
+};
 const GENRE_BADGE = 'tower defence';
 
 // The ids below are the game's own update targets: render() rewrites #status, #pips and #clock,
@@ -96,9 +102,14 @@ header, #app, #error, #game { display: none !important; }
 const options = {
   url: 'https://tower.rokokol.art:8443',
   out: join(repo, 'docs/telegram-demo.gif'),
+  // The art is English, so the demo is too: a chat client shows this frame beside a caption that
+  // is not ours, and a Russian panel next to an English caption reads as two products
+  lang: 'en',
   frames: null,
   keepFrames: false,
 };
+
+const LANGUAGES = ['en', 'ru'];
 
 function fail(problem) {
   throw new Error(problem);
@@ -116,11 +127,14 @@ function parseArguments(argv) {
       process.exit(0);
     } else if (flag === '--keep-frames') {
       options.keepFrames = true;
-    } else if (['--url', '--out', '--frames'].includes(flag)) {
+    } else if (['--url', '--out', '--frames', '--lang'].includes(flag)) {
       const value = argv[i += 1];
       check(Boolean(value), `${flag} needs a value\n\n${USAGE}`);
       const name = flag.slice(2);
-      options[name] = name === 'url' ? value.replace(/\/+$/, '') : resolve(value);
+      check(name === 'lang' ? LANGUAGES.includes(value) : true,
+        `--lang takes ${LANGUAGES.join(' or ')}, not ${value}`);
+      options[name] = name === 'url' ? value.replace(/\/+$/, '')
+        : name === 'lang' ? value : resolve(value);
     } else {
       fail(`unknown option ${flag}\n\n${USAGE}`);
     }
@@ -294,7 +308,7 @@ async function composeFrame(page, pictures) {
     board.style.width = `${cols * cell}px`;
     board.style.height = `${rows * cell}px`;
     return {cols, rows, cell};
-  }, {taglines: TAGLINES, pictures, badge: GENRE_BADGE});
+  }, {taglines: TAGLINES[options.lang], pictures, badge: GENRE_BADGE});
   // An image that has not decoded yet reserves no width, so without this the block would be
   // measured before the pictures take their place and would leave the middle on its own
   await page.evaluate(() => Promise.all(
@@ -415,15 +429,15 @@ async function main() {
       colorScheme: 'light',
       // The battle stops interpolating under reduce, so the GIF would show stops, not a walk
       reducedMotion: 'no-preference',
-      locale: 'ru-RU',
+      locale: options.lang === 'en' ? 'en-US' : 'ru-RU',
     });
     // A stored theme or language of another tab would change the frame between runs
-    await context.addInitScript(() => {
+    await context.addInitScript(language => {
       try {
         localStorage.setItem('truck-kun-tower:theme', 'light');
-        localStorage.setItem('truck-kun-tower:lang', 'ru');
+        localStorage.setItem('truck-kun-tower:lang', language);
       } catch {}
-    });
+    }, options.lang);
     const page = await context.newPage();
     const faults = [];
     page.on('pageerror', error => faults.push(error.message));

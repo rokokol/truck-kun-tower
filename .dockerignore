@@ -5,6 +5,9 @@ obj/
 tests/
 docs/
 data/
+.env
+.env.*
+!.env.example
 *.db
 *.db-shm
 *.db-wal
@@ -14,3 +17,5 @@ README.md
 ASSETS.md
 TODO.md
 AGENTS.md
+CHANGELOG.md
+VERSION

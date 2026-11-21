@@ -4,7 +4,7 @@
 
 An io-game of tower defence for two players in the browser. One player guards a keep at the end of a random slime maze, the other buys slimes and picks the gates they come from
 
-[![docker](https://img.shields.io/badge/docker-compose-2496ED?style=flat&logo=docker&logoColor=white)](docker-compose.yml) [![assets](https://img.shields.io/badge/docs-assets-555?style=flat)](ASSETS.md)
+[![docker](https://img.shields.io/badge/docker-compose-2496ED?style=flat&logo=docker&logoColor=white)](docker-compose.yml) [![version](https://img.shields.io/github/v/tag/rokokol/truck-kun-tower?style=flat&label=version&color=DD77BB)](CHANGELOG.md) [![assets](https://img.shields.io/badge/docs-assets-555?style=flat)](ASSETS.md)
 
 ![The title screen](docs/cover.png)
 
@@ -23,15 +23,19 @@ The server generates the maze and resolves each wave. The browser replays the re
 - A friend can be invited into a duel from the list. The invitation arrives live and stays in the database until it is answered
 - A chair belongs to an account, but a guest with the invite link still plays without registering: the server hands that browser a random seat token
 - Before the first wave either player may ask to switch sides; the other player agrees or refuses, and nothing is built yet
+- One account holds one active duel at a time. Random matchmaking seats two players who are both looking, and a duel seen through a link works the same way
+- The lobby shows who is online and keeps a history of past duels and matches, five rows at a time
 
 ## How a match plays
 
 - The maze is new in every room and shared by both players. Each entrance reaches the keep, and most of them fork on the way
 - The defender may build on a wall next to the road, or raise a fence on the road itself. A fence stops a slime until it breaks the fence
 - The attacker queues groups per entrance. Slimes from one gate leave one at a time, and different gates work at once
-- A plain slime picks a branch at a fork. A slime with glasses always takes the shortest way and costs twice as much
-- Gold arrives for both players after each wave, and every wave pays more than the one before
+- A plain slime picks a branch at a fork. A slime with glasses always takes the shortest way, and its gold price is higher than a plain slime's
+- Each wave starts with a larger budget, but unused gold does not carry over. Only structures bought in the current wave give a refund
 - The keep falls at zero hearts. A keep that stands after the last wave decides the match on the hearts left
+- A finished match keeps the battle itself, so anyone with the link can replay it wave by wave without an account
+- The guide screen reads its prices, hearts and damage from the same rules the fight uses
 
 | Defence                                         | Attack                                |
 | ----------------------------------------------- | ------------------------------------- |
@@ -66,8 +70,9 @@ The client talks to one REST service. Every answer is a DTO, errors are `Problem
 | Accounts    | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `GET /api/users/{id}`, `PUT /api/users/me`, `DELETE /api/users/me`                                                                                                                                          |
 | Friends     | `GET /api/friends`, `GET /api/friends/requests`, `POST /api/friends/requests`, `POST /api/friends/requests/{id}/accept`, `DELETE /api/friends/requests/{id}`, `DELETE /api/friends/{userId}`                                                                                       |
 | Invitations | `GET /api/invites`, `POST /api/invites`, `POST /api/invites/{id}/accept`, `DELETE /api/invites/{id}`                                                                                                                                                                               |
-| Duels       | `POST /api/duels`, `GET /api/duels`, `GET /api/duels/{id}`, `POST /api/duels/{id}/join`, `POST /api/duels/{id}/swap`, `POST /api/duels/{id}/swap/accept`, `POST /api/duels/{id}/swap/decline`, `GET /api/duels/{id}/state`, `POST /api/duels/{id}/moves`, `DELETE /api/duels/{id}` |
-| History     | `GET /api/matches`, `GET /api/matches/{id}`, `PATCH /api/matches/{id}`, `DELETE /api/matches/{id}`, `GET /api/stats`, `GET /api/leaderboard`                                                                                                                                       |
+| Duels       | `POST /api/duels`, `GET /api/duels?take=&skip=`, `GET /api/duels/{id}`, `POST /api/duels/random/join`, `POST /api/duels/{id}/join`, `POST /api/duels/{id}/swap`, `POST /api/duels/{id}/swap/accept`, `POST /api/duels/{id}/swap/decline`, `GET /api/duels/{id}/state`, `POST /api/duels/{id}/moves`, `DELETE /api/duels/{id}` |
+| History     | `GET /api/matches`, `GET /api/matches/mine?take=&skip=`, `GET /api/matches/{id}`, `GET /api/matches/{id}/replay/{wave?}`, `PATCH /api/matches/{id}`, `DELETE /api/matches/{id}`, `GET /api/stats`, `GET /api/leaderboard`                                                                                                              |
+| Players     | `GET /api/users/online`, `GET /api/rules`                                                                                                                                                                                                                                                                                    |
 
 The live channel is SignalR at `/bell`: a room change, a friend request, an invitation, a side question and presence. A guest joins a room with the seat token, an account with its JWT
 
@@ -93,11 +98,7 @@ curl -s "localhost:5184/api/leaderboard?take=5"
 
 ## Public HTTPS
 
-The live copy sits on a VPS whose port 443 belongs to a VPN, so the game is served through Cloudflare
-
-- An `A` record `tower` points at the VPS and Cloudflare proxies it, so the visitor sees `https://tower.rokokol.art` through Cloudflare's certificate
-- Cloudflare reaches the game over plain HTTP on port 80 where nginx passes it to `127.0.0.1:5184`; the zone stays in **Flexible** mode
-- The same vhost keeps an `8443` TLS listener with a Let's Encrypt certificate; certbot renews it through `/.well-known/acme-challenge/`
+The live game uses HTTPS both from the browser to Cloudflare and from Cloudflare to the VPS. See the [nginx site configuration](deploy/vps/nginx.conf)
 
 ## Run it for development
 

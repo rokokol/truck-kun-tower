@@ -59,6 +59,9 @@ public sealed class Duel {
         internal DateTime LastSeen { get; set; } = DateTime.UtcNow;
         internal DateTime? LastPoll { get; set; }
         public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+        internal bool Matches(PlayerRef who) => UserId is { } id ? who.UserId == id
+            : who.SeatToken is { } token && TokensMatch(Token, token);
     }
     readonly Seat?[] seats = new Seat?[2];
     readonly Dictionary<string, Seat> watchers = new();
@@ -112,11 +115,7 @@ public sealed class Duel {
 
     public int SeatOf(PlayerRef who) {
         for (var side = 0; side < 2; side++) {
-            var seat = seats[side];
-            if (seat is null) continue;
-            if (seat.UserId is { } id) {
-                if (who.UserId == id) return side;
-            } else if (who.SeatToken is { } token && TokensMatch(seat.Token, token)) return side;
+            if (seats[side]?.Matches(who) == true) return side;
         }
         return -1;
     }

@@ -38,7 +38,7 @@ internal sealed class WaveClock(
             lock (game) {
                 if (rooms.Get(id) != game || !game.ShouldRetire(DateTime.UtcNow)) return false;
                 finished = game.Done;
-                rooms.Remove(id, out _);
+                rooms.Close(id, game, RoomStatus.Abandoned);
             }
         } finally {
             rooms.Membership.Release();

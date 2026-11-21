@@ -175,6 +175,55 @@ public sealed class RoomTests {
     }
 
     [Fact]
+    public async Task Explicit_leave_reports_the_reason_to_the_other_guest() {
+        var stage = new Stage();
+        var session = await stage.Service.CreateAsync(PlayerRef.Nobody, Duel.Defender);
+        var joined = await stage.Service.JoinAsync(PlayerRef.Nobody, session.Id);
+        var host = new PlayerRef(null, session.SeatToken);
+        var guest = new PlayerRef(null, joined.SeatToken);
+
+        await stage.Service.CancelAsync(host, session.Id);
+
+        var closed = await Assert.ThrowsAsync<AppError>(() => stage.Service.StateAsync(guest, session.Id));
+        Assert.Equal(404, closed.Status);
+        Assert.Equal("room_cancelled", closed.Code);
+        var unknown = await Assert.ThrowsAsync<AppError>(() => stage.Service.StateAsync(PlayerRef.Nobody, session.Id));
+        Assert.Equal(404, unknown.Status);
+        Assert.Null(unknown.Code);
+    }
+
+    [Fact]
+    public async Task An_abandoned_room_reports_its_closure_to_both_seats() {
+        var stage = new Stage();
+        var host = new PlayerRef(stage.Account("Хозяин"), null);
+        var session = await stage.Service.CreateAsync(host, Duel.Defender);
+        var joined = await stage.Service.JoinAsync(PlayerRef.Nobody, session.Id);
+        var guest = new PlayerRef(null, joined.SeatToken);
+        var game = stage.Rooms.Get(session.Id)!;
+        Assert.True(game.Watch(host, "host"));
+        game.SeatAt(Duel.Attacker)!.LastSeen = DateTime.UtcNow - Duel.DisconnectGrace;
+        var retired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        stage.Channel.Setup(proxy => proxy.SendCoreAsync("RoomAbandoned", It.IsAny<object?[]>(),
+            It.IsAny<CancellationToken>())).Callback(() => retired.SetResult()).Returns(Task.CompletedTask);
+        using var clock = new WaveClock(stage.Rooms, stage.Hub, Mock.Of<IServiceScopeFactory>(), NullLogger<WaveClock>.Instance);
+        await clock.StartAsync(default);
+        try {
+            await retired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Null(stage.Rooms.Get(session.Id));
+            foreach (var player in new[] {host, guest}) {
+                var error = await Assert.ThrowsAsync<AppError>(() => stage.Service.StateAsync(player, session.Id));
+                Assert.Equal(404, error.Status);
+                Assert.Equal("room_abandoned", error.Code);
+            }
+            var stranger = await Assert.ThrowsAsync<AppError>(() => stage.Service.StateAsync(PlayerRef.Nobody, session.Id));
+            Assert.Equal(404, stranger.Status);
+            Assert.Null(stranger.Code);
+        } finally {
+            await clock.StopAsync(default);
+        }
+    }
+
+    [Fact]
     public async Task A_stranger_cannot_read_or_cancel_someone_elses_room() {
         var stage = new Stage();
         var host = stage.Account("Хозяин");
@@ -250,6 +299,7 @@ public sealed class RoomTests {
         public Dictionary<string, Guid?> ReplayIds { get; } = new();
         public List<User> Accounts { get; } = [];
         public RoomService Service { get; }
+        public IHubContext<Bell> Hub { get; }
 
         public Stage() {
             Unit.SetupGet(unit => unit.Rooms).Returns(Rows.Object);
@@ -286,7 +336,8 @@ public sealed class RoomTests {
             Channel.Setup(proxy => proxy.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(),
                 It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-            Service = new RoomService(Rooms, Unit.Object, hub.Object, Mock.Of<IServiceScopeFactory>(),
+            Hub = hub.Object;
+            Service = new RoomService(Rooms, Unit.Object, Hub, Mock.Of<IServiceScopeFactory>(),
                 NullLogger<RoomService>.Instance);
         }
 

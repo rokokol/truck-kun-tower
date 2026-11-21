@@ -87,6 +87,7 @@ const i18n = (() => {
     randomOpponent: ['Случайный противник', 'Random opponent'],
     randomCreateHint: ['К этой комнате можно подключиться кнопкой случайной дуэли', 'Players can join this room from the random duel button'],
     joinRandom: ['Подключиться к случайной дуэли', 'Join a random duel'],
+    opponentLeftDuel: ['Дуэль прервана: соперник вышел', 'Duel ended: your opponent left'],
     idleDuel: ['Дуэль прервана: один из игроков отключился или не сделал ход', 'Duel ended: a player disconnected or did not act'],
     stopRandom: ['Выйти из подбора', 'Cancel search'],
     searchTime: ['Время ожидания: {elapsed}', 'Wait time: {elapsed}'],
@@ -275,6 +276,8 @@ const i18n = (() => {
 
   return { t, text, message, feedback, onChange, locales, get lang() { return lang; },
     http(status, detail, code) {
+      if (status === 404 && code === 'room_abandoned') return message('idleDuel');
+      if (status === 404 && code === 'room_cancelled') return message('opponentLeftDuel');
       if (status === 409 && code === 'invite_sender_offline') return message('inviteSenderOffline');
       if (status === 409 && code === 'duel_busy') return message('duelBusy');
       if (status === 409 && code === 'purchase_limit') return message('purchaseLimit');

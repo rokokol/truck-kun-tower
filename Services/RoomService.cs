@@ -91,7 +91,13 @@ public sealed class RoomService(
     }
 
     public Task<object> StateAsync(PlayerRef who, string id, CancellationToken token = default) =>
-        ViewAsync(Require(id), who, token, poll: true);
+        ViewAsync(rooms.Get(id) ?? throw StateUnavailable(id, who), who, token, poll: true);
+
+    AppError StateUnavailable(string id, PlayerRef who) => rooms.ClosureOf(id, who) switch {
+        RoomStatus.Abandoned => new("Дуэль прервана: один из игроков отключился или не сделал ход", 404, "room_abandoned"),
+        RoomStatus.Cancelled => new("Дуэль прервана: соперник вышел", 404, "room_cancelled"),
+        _ => AppError.NotFound("Комната не найдена")
+    };
 
     public async Task<RoomDto> RoomAsync(PlayerRef who, string id, CancellationToken token = default) {
         var game = Require(id);
@@ -163,7 +169,7 @@ public sealed class RoomService(
         var game = Require(id);
         lock (game) {
             SeatOrThrow(game, who);
-            rooms.Remove(id, out _);
+            rooms.Close(id, game, RoomStatus.Cancelled);
         }
 
         var row = await unit.Rooms.ByIdAsync(id);

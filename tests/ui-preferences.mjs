@@ -47,6 +47,7 @@ try {
     let matchAvailable = false;
     let registrationAttempts = 0;
     let authMeFailure = false;
+    let closureCode = null;
     let guestCreates = 0;
     const finishedGuestRooms = new Set();
     let current = structuredClone(board);
@@ -100,6 +101,9 @@ try {
       }
       if (key !== 'POST /api/auth/register' && account !== 'Bearer fixture-account') {
         errors.push(`Wrong account credentials for ${key}`);
+      }
+      if (key === 'GET /api/duels/fixture/state' && closureCode) {
+        return route.fulfill({status: 404, json: {code: closureCode}});
       }
       if (key === 'GET /api/auth/me' && authMeFailure) {
         authMeFailure = false;
@@ -477,6 +481,21 @@ try {
     await shot('ru-defender');
     await button('EN').click();
     assert.equal(await card('mine').isDisabled(), true);
+
+    for (const [code, english, russian] of [
+      ['room_abandoned', /disconnected or did not act/, /отключился или не сделал ход/],
+      ['room_cancelled', /your opponent left/i, /соперник вышел/],
+    ]) {
+      closureCode = code;
+      await page.evaluate(() => sync());
+      await visible(page.getByRole('alert').filter({hasText: english}));
+      await button('RU').click();
+      await visible(page.getByRole('alert').filter({hasText: russian}));
+      await button('EN').click();
+      closureCode = null;
+      await button('Continue').click();
+      await visible(page.locator('#actions [data-action=pulse]'));
+    }
 
     const linked = await context.newPage();
     linked.on('pageerror', error => errors.push(error.message));

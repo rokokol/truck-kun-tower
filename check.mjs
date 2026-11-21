@@ -87,7 +87,12 @@ const invites = await call('/api/invites', { token: boris.token });
 assert.ok(invites.some(row => row.id === invite.id && row.from.id === anna.id));
 await call('/api/invites', { method: 'POST', body: { friendId: cath.id, roomId: room.id }, token: anna.token, expect: 403 });
 await call(`/api/invites/${invite.id}/accept`, { method: 'POST', token: anna.token, expect: 403 });
-const accepted = await post(`/api/invites/${invite.id}/accept`, {}, { token: boris.token });
+const offlineInvite = await call(`/api/invites/${invite.id}/accept`, { method: 'POST', token: boris.token, expect: 409 });
+assert.equal(offlineInvite.code, 'invite_sender_offline');
+assert.ok((await call('/api/invites', { token: boris.token })).some(row => row.id === invite.id));
+const inviteSender = await roomWatcher(anna.token);
+const accepted = await post(`/api/invites/${invite.id}/accept`, {}, { token: boris.token })
+  .finally(() => inviteSender.close());
 assert.equal(accepted.roomId, room.id);
 const joined = await post(`/api/duels/${room.id}/join`, { side: 'attacker' }, { token: boris.token });
 assert.equal(joined.side, 'attacker');

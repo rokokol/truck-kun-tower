@@ -66,6 +66,10 @@ public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bel
             throw AppError.Conflict("Дуэль уже закончилась");
         }
 
+        if (!presence.IsOnline(invite.FromId)) {
+            throw AppError.Conflict("Отправитель приглашения не в сети. Попробуй, когда он вернётся", "invite_sender_offline");
+        }
+
         rooms.RequireAvailable(new PlayerRef(me, null), invite.RoomId);
         invite.Status = InviteStatus.Accepted;
         invite.ResolvedAt = DateTime.UtcNow;

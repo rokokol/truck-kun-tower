@@ -433,11 +433,21 @@ public sealed class FriendTests {
     }
 
     [Fact]
-    public async Task Accepting_an_invite_answers_the_room_and_tells_the_sender() {
+    public async Task Accepting_an_invite_waits_for_the_sender_to_return_online() {
         var h = new Harness();
         h.Live();
         var invite = h.Invite(InviteStatus.Pending, Mate, Me, Board);
 
+        var error = await Assert.ThrowsAsync<AppError>(() => h.InviteService.AcceptAsync(Me, invite.Id));
+
+        Assert.Equal(409, error.Status);
+        Assert.Equal("invite_sender_offline", error.Code);
+        Assert.Equal(InviteStatus.Pending, invite.Status);
+        Assert.Null(invite.ResolvedAt);
+        Assert.Empty(h.Sent);
+        h.Unit.Verify(unit => unit.SaveAsync(It.IsAny<CancellationToken>()), Times.Never);
+
+        h.Presence.Arrive(Mate);
         var accepted = await h.InviteService.AcceptAsync(Me, invite.Id);
 
         Assert.Equal(Board, accepted.RoomId);

@@ -216,6 +216,8 @@ const i18n = (() => {
 
     errorHeading: ['Ошибка', 'Error'],
     unexpected: ['Что-то пошло не так', 'Something went wrong'],
+    inviteSenderOffline: ['Отправитель приглашения не в сети. Попробуй, когда он вернётся',
+      'The sender is offline. Try again when they return'],
     'http.0': ['Сеть недоступна, проверь соединение', 'Network unavailable. Check your connection'],
     'http.400': ['Проверь введённые данные', 'Check your input'],
     'http.401': ['Нужен вход', 'Sign in to continue'],
@@ -273,6 +275,7 @@ const i18n = (() => {
 
   return { t, text, message, feedback, onChange, locales, get lang() { return lang; },
     http(status, detail, code) {
+      if (status === 409 && code === 'invite_sender_offline') return message('inviteSenderOffline');
       if (status === 409 && code === 'duel_busy') return message('duelBusy');
       if (status === 409 && code === 'purchase_limit') return message('purchaseLimit');
       const name = `http.${status}`;

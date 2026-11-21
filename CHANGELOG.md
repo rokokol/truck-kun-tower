@@ -26,6 +26,6 @@ The first release: a two-player tower defence in the browser, with accounts, fri
 - The interface in Russian and English, a dark and a light theme, and a sound control with an effect for a siege, a mine and an APC on the move
 - Docker Compose deployment behind nginx, with a Let's Encrypt certificate and strict TLS from Cloudflare to the origin
 
-The project is released under the MIT licence, see [LICENSE](LICENSE)
+The project is released under the MIT licence, see [LICENSE](https://github.com/rokokol/truck-kun-tower/blob/v0.1.0/LICENSE)
 
 [0.1.0]: https://github.com/rokokol/truck-kun-tower/releases/tag/v0.1.0

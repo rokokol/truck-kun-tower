@@ -35,6 +35,56 @@ public sealed class PlanningTests {
     }
 
     [Fact]
+    public void The_defender_starts_with_eleven_gold_in_a_new_match_and_in_a_rematch() {
+        var game = OpenBoard();
+        CheckGold();
+        for (int wave = 1; wave <= 5; wave++) {
+            Assert.Null(game.Apply(Duel.Defender, new Move(wave, "ready", null)));
+            Assert.Null(game.Apply(Duel.Attacker, new Move(wave, "ready", null)));
+        }
+        Assert.Null(game.Apply(Duel.Defender, new Move(6, "rematch", null)));
+        CheckGold();
+
+        void CheckGold() {
+            Assert.Equal(11, View(game, Duel.Defender).GetProperty("gold").GetInt32());
+            Assert.Equal(16, View(game, Duel.Attacker).GetProperty("gold").GetInt32());
+        }
+    }
+
+    [Fact]
+    public void The_attacker_only_sees_defense_changes_after_both_players_are_ready() {
+        var game = OpenBoard();
+        var board = View(game, Duel.Defender);
+        var road = new[] { "paths", "alternatePaths" }
+            .SelectMany(key => board.GetProperty(key).EnumerateArray()).SelectMany(Cells).ToHashSet();
+        int wall = Enumerable.Range(0, Maze.Width * Maze.Height).First(c => !road.Contains(c) &&
+            road.Any(r => Math.Abs(c % Maze.Width - r % Maze.Width) + Math.Abs(c / Maze.Width - r / Maze.Width) == 1));
+        int fence = Cells(board.GetProperty("fenceCells"))[0];
+        Assert.Null(game.Apply(Duel.Defender, new Move(1, "bolt", wall)));
+        Assert.Null(game.Apply(Duel.Defender, new Move(1, "fence", fence)));
+        Assert.Equal(1, View(game, Duel.Defender).GetProperty("towers").GetArrayLength());
+        Assert.Equal(1, View(game, Duel.Defender).GetProperty("fences").GetArrayLength());
+        CheckAttacker(0, 0);
+        Assert.Null(game.Apply(Duel.Defender, new Move(1, "ready", null)));
+        CheckAttacker(0, 0);
+        Assert.Null(game.Apply(Duel.Attacker, new Move(1, "ready", null)));
+        CheckAttacker(1, 1);
+        Assert.Null(game.Apply(Duel.Defender, new Move(2, "unbuild", fence)));
+        CheckAttacker(1, 1);
+        Assert.Null(game.Apply(Duel.Attacker, new Move(2, "ready", null)));
+        CheckAttacker(1, 1);
+        Assert.Null(game.Apply(Duel.Defender, new Move(2, "ready", null)));
+        CheckAttacker(1, 0);
+
+        void CheckAttacker(int towers, int fences) {
+            var view = View(game, Duel.Attacker);
+            Assert.Equal(towers, view.GetProperty("towers").GetArrayLength());
+            Assert.Equal(fences, view.GetProperty("fences").GetArrayLength());
+            Assert.Equal(0, view.GetProperty("trapCells").GetArrayLength());
+        }
+    }
+
+    [Fact]
     public void A_removed_unit_cannot_be_ordered_and_spends_no_gold() {
         var game = OpenBoard();
         var before = View(game, Duel.Attacker);

@@ -12,9 +12,10 @@ import {fileURLToPath} from 'node:url';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 
+const DEFAULT_URL = 'https://tower.rokokol.art';
 const USAGE = `node tools/demo-gif.mjs [options]
 
-  --url <url>     record a game other than https://tower.rokokol.art:8443
+  --url <url>     record a game other than ${DEFAULT_URL}
   --out <file>    write the GIF somewhere other than docs/telegram-demo.gif
   --lang <code>   ru or en, the language the frames are taken in (default en)
   --frames <dir>  keep the PNG frames in this directory
@@ -40,16 +41,18 @@ const PACE = [0.5, 3];
 // The server caps a replay at 52 s, so anything past this is a hang and not a long wave
 const CAPTURE_SECONDS = 60;
 const READY_SECONDS = 20;
-// One order of every attacker type costs 53 gold and the attacker holds 16, 22, 34 and 58 at the
-// four first waves, so only the fourth wave can show all seven at once. The waves before it carry
-// no order, and a wave with no order has no frame, so they cost a request each
+// One order of every attacker type costs 53 gold, and a wave pays 16, 17, 20, 24 and 29 without
+// carrying the rest over, so no single wave can show all seven. The last wave holds the most, and
+// the demo buys what that gold covers from the cheapest type up, so the frame shows the widest
+// set one wave can pay for. The waves before it carry no order, and a wave with no order has no
+// frame, so they cost a request each
 const ATTACK = ['swarm', 'giant', 'smart', 'runner', 'armored', 'ranged', 'apc'];
-const RECORDED_WAVE = 4;
+import {fillDefence, LAST_WAVE} from './duel-setup.mjs';
 
 // The panel speaks the language of the frames: its taglines are the script's own copy, while
 // everything in the board beside them comes from the page
 const TAGLINES = {
-  en: ['The defender holds the maze', 'The attacker sends slimes to the gate'],
+  en: ['Defend the maze', 'Send slimes to the gate'],
   ru: ['Защитник держит лабиринт', 'Атакующий ведёт слизней ко входу'],
 };
 const GENRE_BADGE = 'tower defence';
@@ -61,7 +64,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 main { max-width: none; margin: 0; padding: 0; }
 header, #app, #error, #game { display: none !important; }
 #demo-frame {
-  position: fixed; inset: 0; display: grid; grid-template-columns: ${PANEL}px minmax(0, 1fr);
+  position: fixed; inset: 0; display: grid;
+  grid-template-columns: ${PANEL}px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden; color: var(--ddlc-text); font: 16px/1.5 var(--ddlc-font-prose);
   background-color: var(--ddlc-ground);
   background-image: radial-gradient(var(--ddlc-dots) 1.5px, transparent 1.6px);
@@ -69,21 +74,25 @@ header, #app, #error, #game { display: none !important; }
 }
 #demo-panel {
   display: flex; flex-direction: column; justify-content: center;
-  padding: 22px 18px; border-right: 2px solid var(--ddlc-line);
+  padding: 22px 14px; text-align: center;
+  box-shadow: inset -2px 0 var(--ddlc-line);
 }
-#demo-block { display: grid; gap: 10px; }
-#demo-lead { display: flex; align-items: center; gap: 10px; }
-#demo-avatar { display: block; flex: none; width: 96px; height: 96px; border-radius: 50%; }
+#demo-block { display: grid; justify-items: center; gap: 14px; }
+#demo-avatar { display: block; width: 128px; height: 128px; border-radius: 50%; }
+#demo-brand { display: grid; gap: 4px; }
+#demo-title { margin: 0; font: 900 20px/1.1 var(--ddlc-font-prose); text-wrap: balance; }
 #demo-panel .kicker {
-  display: block; margin: 0; padding: 0; min-width: 0; text-wrap: balance;
-  font: 700 7px/1.5 var(--ddlc-font-data); letter-spacing: .06em;
+  margin: 0; padding: 0; text-wrap: balance;
+  font: 700 9px/1.4 var(--ddlc-font-data); letter-spacing: .06em;
   text-transform: uppercase; color: var(--ddlc-muted);
 }
 #demo-panel .lines { display: grid; gap: 4px; }
-#demo-panel .line { margin: 0; font: 700 12.5px/1.35 var(--ddlc-font-prose); text-wrap: balance; }
-#demo-panel .line.soft { font-weight: 650; color: var(--ddlc-muted); }
-#demo-panel .badges { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 0; padding: 0; list-style: none; }
-#demo-panel .badges li { font: 700 7.5px/1 var(--ddlc-font-data); letter-spacing: .08em; padding: 4px 5px; }
+#demo-panel .line { margin: 0; font: 700 13px/1.3 var(--ddlc-font-prose); text-wrap: balance; }
+#demo-panel .badges { justify-content: center; gap: 5px; margin: 0; }
+#demo-panel .badges li {
+  font: 700 9px/1 var(--ddlc-font-data); letter-spacing: .04em; padding: 5px;
+  white-space: nowrap;
+}
 #demo-stage {
   display: grid; grid-template-rows: ${HEAD}px minmax(0, 1fr); gap: ${GAP}px; min-width: 0;
   padding: ${STAGE_PAD.top}px ${STAGE_PAD.right}px ${STAGE_PAD.bottom}px ${STAGE_PAD.left}px;
@@ -100,7 +109,7 @@ header, #app, #error, #game { display: none !important; }
 `;
 
 const options = {
-  url: 'https://tower.rokokol.art:8443',
+  url: DEFAULT_URL,
   out: join(repo, 'docs/telegram-demo.gif'),
   // The art is English, so the demo is too: a chat client shows this frame beside a caption that
   // is not ours, and a Russian panel next to an English caption reads as two products
@@ -193,31 +202,8 @@ async function api(path, {seat, body, method = body ? 'POST' : 'GET'} = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-// Towers beside the last cells before the keep fire at every mob, because all three roads meet
-// there. The fence and the spikes stand on the road itself, so the wave holds at the last step
-function defencePlan(opening) {
-  const {width, height, paths} = opening;
-  const route = new Set([...paths, ...opening.alternatePaths].flat());
-  const beside = cell => {
-    const x = cell % width, y = (cell - x) / width;
-    return [[0, -1], [0, 1], [-1, 0], [1, 0]]
-      .map(([dx, dy]) => [x + dx, y + dy])
-      .filter(([nx, ny]) => nx >= 0 && ny >= 0 && nx < width && ny < height)
-      .map(([nx, ny]) => ny * width + nx);
-  };
-  const approach = [...new Set(paths.flatMap(path => path.slice(-4, -1)))];
-  const towers = [];
-  for (const cell of approach) {
-    for (const wall of beside(cell)) {
-      if (!route.has(wall) && !towers.includes(wall)) towers.push(wall);
-    }
-  }
-  check(towers.length >= 3,
-    `only ${towers.length} walls stand beside the road to the keep, and the defence holds three towers`);
-  const orders = [['bolt', towers[0]], ['pulse', towers[1]], ['frost', towers[2]],
-    ['fence', opening.fenceCells[0]], ['spikes', paths[0].at(-2)]];
-  return {orders, bill: orders.reduce((sum, [type]) => sum + opening.prices[type], 0)};
-}
+// A duel is two guest seats on one maze: the defender fills four waves with towers, and the
+// attacker sends five groups down the gates of the last one
 
 // A duel is two guest seats on one maze: the defender places a tower on a wall beside the first
 // road, and the attacker sends one order of every type down the gates
@@ -247,23 +233,10 @@ async function openDuel() {
   return {host, visitor, room, state, gates};
 }
 
-// A wave with no order has no frames, so it resolves before the reply arrives: three of those buy
-// the attacker the gold for the recorded one
-async function playQuietWaves(room, host, visitor) {
-  for (let wave = 1; wave <= RECORDED_WAVE - 1; wave += 1) {
-    await api(`${room}/moves`, {seat: visitor.seatToken, body: {wave, action: 'ready', cell: null}});
-    const after = await api(`${room}/moves`,
-      {seat: host.seatToken, body: {wave, action: 'ready', cell: null}});
-    check(after.last === wave, `wave ${wave} closed at wave ${after.last}`);
-    check(!after.done, `the game ended at wave ${wave}, before the wave that shows every unit`);
-  }
-  return api(`${room}/state`, {seat: visitor.seatToken});
-}
+// A duel is two guest seats on one maze: the defender fills four waves with towers, and the
+// attacker sends five groups down the gates of the last one
 
-// The panel takes its words from the page, so a change of the site's copy reaches the GIF: the
-// badge list and the kicker are the site's, and only the taglines and the badge that names the
-// genre are the frame's own. The avatar is the repository's own picture, inlined because a docs/
-// file is not served by the game
+// Read the brand and badges from the page so the GIF stays in step with the site's copy
 async function composeFrame(page, pictures) {
   await page.addStyleTag({content: FRAME_CSS});
   const sized = await page.evaluate(({taglines, pictures, badge}) => {
@@ -276,14 +249,16 @@ async function composeFrame(page, pictures) {
     frame.id = 'demo-frame';
     frame.innerHTML = `<aside id="demo-panel">
         <div id="demo-block">
-          <div id="demo-lead"><img id="demo-avatar" alt=""><small class="kicker"></small></div>
-          <div class="lines"><p class="line"></p><p class="line soft"></p></div>
+          <img id="demo-avatar" alt="">
+          <div id="demo-brand"><h1 id="demo-title"></h1><small class="kicker"></small></div>
+          <div class="lines"><p class="line"></p><p class="line"></p></div>
           <ul class="badges"></ul>
         </div>
       </aside>
       <section id="demo-stage"><div id="demo-head"></div><div id="demo-board"></div></section>`;
     document.body.append(frame);
     frame.querySelector('#demo-avatar').src = pictures.avatar;
+    frame.querySelector('#demo-title').textContent = document.title;
     frame.querySelector('.kicker').textContent = pick('#auth .kicker').textContent.trim();
     const lines = frame.querySelectorAll('.line');
     lines[0].textContent = taglines[0];
@@ -309,17 +284,17 @@ async function composeFrame(page, pictures) {
     board.style.height = `${rows * cell}px`;
     return {cols, rows, cell};
   }, {taglines: TAGLINES[options.lang], pictures, badge: GENRE_BADGE});
-  // An image that has not decoded yet reserves no width, so without this the block would be
-  // measured before the pictures take their place and would leave the middle on its own
+  // Decode the art before the first screenshot so the loop starts with a complete panel
   await page.evaluate(() => Promise.all(
     [...document.querySelectorAll('#demo-frame img')].map(node => node.decode())));
+  await page.evaluate(() => document.fonts.ready);
   const air = await page.evaluate(() => {
     const panel = document.getElementById('demo-panel').getBoundingClientRect();
     const block = document.getElementById('demo-block').getBoundingClientRect();
     return {top: block.top - panel.top, bottom: panel.bottom - block.bottom};
   });
   sized.air = air;
-  await page.evaluate(() => document.fonts.ready);
+  check(Math.min(air.top, air.bottom) >= 8, 'the brand content has no vertical margin');
   check(sized.cell >= SMALLEST_CELL,
     `the board would draw a ${sized.cell}px cell in a 640x360 frame; the panel leaves too little room`);
   // A frame that crops the board is the failure this frame exists to prevent, so every box is
@@ -407,14 +382,22 @@ async function main() {
   const keepFrames = options.keepFrames || Boolean(options.frames);
   const pictures = await readPictures();
   const {host, visitor, room, state: opening, gates} = await openDuel();
-  const defence = defencePlan(opening);
-  const purse = await playQuietWaves(room, host, visitor);
-  const bill = ATTACK.reduce((sum, type) => sum + purse.prices[type], 0);
-  check(purse.gold >= bill,
-    `the attacker holds ${purse.gold} gold at wave ${RECORDED_WAVE}, and one of every unit costs ${bill}`);
-  for (const [index, type] of ATTACK.entries()) {
+  const bought = await fillDefence(options.url, room, host.seatToken, visitor.seatToken, opening)
+    .catch(error => fail(error.message));
+  const purse = await api(`${room}/state`, {seat: visitor.seatToken});
+  const chosen = [];
+  let spent = 0;
+  for (const type of [...ATTACK].sort((a, b) => purse.prices[a] - purse.prices[b])) {
+    const price = purse.prices[type];
+    if (spent + price > purse.gold) continue;
+    chosen.push(type);
+    spent += price;
+  }
+  check(chosen.length >= 4,
+    `one wave pays for only ${chosen.length} of the ${ATTACK.length} types at ${purse.gold} gold`);
+  for (const [index, type] of chosen.entries()) {
     await api(`${room}/moves`, {seat: visitor.seatToken,
-      body: {wave: RECORDED_WAVE, action: type, cell: gates[index % gates.length]}});
+      body: {wave: LAST_WAVE, action: type, cell: gates[index % gates.length]}});
   }
   let browser;
   try {
@@ -448,33 +431,14 @@ async function main() {
     await bolt.waitFor({timeout: 15000}).catch(() => {
       fail(`no tower appeared at ${options.url}; check the address and that the board loads`);
     });
-    const gold = await page.locator('#budget').textContent();
-    check(await bolt.isEnabled(),
-      `the bolt tower cannot be bought: the order is disabled at ${gold} gold`);
-    check(Number(gold) >= defence.bill,
-      `the defender holds ${gold} gold at wave ${RECORDED_WAVE}, and the defence costs ${defence.bill}`);
-    let ordered = 0;
-    const build = async (action, cell) => {
-      const target = page.locator(`#cells button[data-cell="${cell}"]`);
-      check(await target.count() > 0,
-        `the board offers no cell ${cell}, so the ${action} order has nowhere to go`);
-      await page.locator(`#actions button[data-action="${action}"]`).click();
-      await target.click();
-      check(await page.locator('#commit').isEnabled(),
-        `the ${action} order on cell ${cell} never became ready to commit`);
-      await page.locator('#commit').click();
-      ordered += 1;
-      await page.waitForFunction(count => document.querySelectorAll('#orders li').length === count,
-        ordered, {timeout: 5000}).catch(() => {
-        fail(`the ${action} order did not reach the plan: the board refused cell ${cell}`);
-      });
-    };
-    for (const [action, cell] of defence.orders) await build(action, cell);
+    // The towers were bought through the API over the earlier waves, so the frame opens on the
+    // last wave with the defence already standing and no order left to place
+    check(await page.locator('#orders li').count() >= 6,
+      'the earlier waves left too few structures on the board for the demo');
     const {sized, boxes} = await composeFrame(page, pictures);
     await api(`${room}/moves`, {seat: visitor.seatToken,
-      body: {wave: RECORDED_WAVE, action: 'ready', cell: null}});
-    // The frame has hidden the game screen by now, so the last press goes to the element itself;
-    // every purchase above went through the real buttons
+      body: {wave: LAST_WAVE, action: 'ready', cell: null}});
+    // The frame has hidden the game screen by now, so the last press goes to the element itself
     await page.evaluate(() => document.getElementById('ready').click());
     const wave = await page.waitForFunction(() => typeof replay !== 'undefined' && replay
       ? {replayMs: replay.snapshot.replayMs, ticks: replay.snapshot.frames.length}
@@ -520,8 +484,8 @@ async function main() {
     const kib = Math.round(Number(probe.format.size) / 1024);
     console.log(`${relative(repo, options.out)}  ${stream.width}x${stream.height}  ` +
       `${stream.nb_read_frames} frames  ${duration.toFixed(2)} s  ${kib} KiB`);
-    console.log(`wave ${wave.ticks} ticks, ${ATTACK.length} attacker orders, ` +
-      `${defence.orders.length} defence orders for ${defence.bill} gold, replay ` +
+    console.log(`wave ${wave.ticks} ticks, ${chosen.length} attacker orders, ` +
+      `${bought} structures for the five waves' gold, replay ` +
       `${(wave.replayMs / 1000).toFixed(2)} s, filmed ${(filmed / 1000).toFixed(2)} s, ` +
       `played over ${(LOOP_MS / 1000).toFixed(2)} s (x${scale.toFixed(2)}), ` +
       `${still} identical frames dropped`);

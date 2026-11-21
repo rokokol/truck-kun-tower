@@ -205,14 +205,20 @@ public sealed class RoomTests {
             Id = "done", OwnerId = me, DefenderId = rival, AttackerId = me,
             Status = RoomStatus.Finished, CreatedAt = now.AddMinutes(-1), FinishedAt = now
         });
+        stage.Stored.Add(new Room {
+            Id = "restarted", OwnerId = me, DefenderId = me, AttackerId = rival,
+            Status = RoomStatus.Interrupted, CreatedAt = now.AddMinutes(-2), FinishedAt = now
+        });
         var game = new Duel();
         game.TryTake(new PlayerRef(me, null), Duel.Defender, out _);
         game.TryTake(new PlayerRef(rival, null), Duel.Attacker, out _);
         stage.Rooms.Add("live", game);
+        stage.ReplayIds["done"] = Guid.NewGuid();
+        stage.ReplayIds["restarted"] = Guid.NewGuid();
 
         var list = await stage.Service.MineAsync(me);
 
-        Assert.Equal(2, list.Count);
+        Assert.Equal(3, list.Count);
         Assert.Equal("live", list[0].Id);
         Assert.Equal("defender", list[0].MySide);
         Assert.Equal("Playing", list[0].Status);
@@ -220,6 +226,11 @@ public sealed class RoomTests {
         Assert.Equal("done", list[1].Id);
         Assert.Equal("attacker", list[1].MySide);
         Assert.Equal("Finished", list[1].Status);
+        Assert.Equal(stage.ReplayIds["done"], list[1].ReplayId);
+        Assert.Null(list[0].ReplayId);
+        // A restart closes a board with Interrupted, not Abandoned, so the page can say why
+        Assert.Equal("Interrupted", list[2].Status);
+        Assert.Equal(stage.ReplayIds["restarted"], list[2].ReplayId);
     }
 
     // A wave order is a purchase from one of the four gates the maze opens on the edge
@@ -236,21 +247,31 @@ public sealed class RoomTests {
         public Mock<IUserRepository> Users { get; } = new();
         public Mock<IClientProxy> Channel { get; } = new();
         public List<Room> Stored { get; } = [];
+        public Dictionary<string, Guid?> ReplayIds { get; } = new();
         public List<User> Accounts { get; } = [];
         public RoomService Service { get; }
 
         public Stage() {
             Unit.SetupGet(unit => unit.Rooms).Returns(Rows.Object);
             Unit.SetupGet(unit => unit.Users).Returns(Users.Object);
+            var invites = new Mock<IInviteRepository>();
+            invites.Setup(repo => repo.PendingForAsync(It.IsAny<string>(), It.IsAny<Guid[]>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            Unit.SetupGet(unit => unit.Invites).Returns(invites.Object);
+            var matches = new Mock<IMatchRepository>();
+            matches.Setup(repo => repo.LatestReplayIdsAsync(It.IsAny<Guid>(), It.IsAny<string[]>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid _, string[] ids, CancellationToken _) => ReplayIds
+                    .Where(pair => ids.Contains(pair.Key)).ToDictionary());
+            Unit.SetupGet(unit => unit.Matches).Returns(matches.Object);
             Unit.Setup(unit => unit.SaveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
             Rows.Setup(repo => repo.Add(It.IsAny<Room>())).Callback<Room>(Stored.Add);
             Rows.Setup(repo => repo.ByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((string id, CancellationToken _) => Stored.FirstOrDefault(row => row.Id == id));
-            Rows.Setup(repo => repo.ForUserAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Guid me, int take, CancellationToken _) => Stored
+            Rows.Setup(repo => repo.ForUserAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+                .ReturnsAsync((Guid me, int take, CancellationToken _, int skip) => Stored
                     .Where(row => row.OwnerId == me || row.DefenderId == me || row.AttackerId == me)
-                    .OrderByDescending(row => row.CreatedAt).Take(take).ToList());
+                    .OrderByDescending(row => row.CreatedAt).ThenByDescending(row => row.Id).Skip(skip).Take(take).ToList());
 
             Users.Setup(repo => repo.ByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((Guid id, CancellationToken _) => Accounts.FirstOrDefault(user => user.Id == id));

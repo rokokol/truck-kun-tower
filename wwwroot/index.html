@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Truck-kun Tower</title>
   <meta name="description" content="Меня сбил грузовик, и я переродился башней в мире слизней и теперь мне нужно вести себя как веб-приложение, созданное ради выполнения домашки">
-  <link rel="canonical" href="https://tower.rokokol.art:8443/">
+  <link rel="canonical" href="https://tower.rokokol.art/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Truck-kun Tower">
   <meta property="og:description" content="Меня сбил грузовик, и я переродился башней в мире слизней и теперь мне нужно вести себя как веб-приложение, созданное ради выполнения домашки">
-  <meta property="og:image" content="https://tower.rokokol.art:8443/og.png">
-  <meta property="og:url" content="https://tower.rokokol.art:8443/">
+  <meta property="og:image" content="https://tower.rokokol.art/og.png">
+  <meta property="og:url" content="https://tower.rokokol.art/">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Truck-kun Tower">
   <meta name="twitter:description" content="Меня сбил грузовик, и я переродился башней в мире слизней и теперь мне нужно вести себя как веб-приложение, созданное ради выполнения домашки">
-  <meta name="twitter:image" content="https://tower.rokokol.art:8443/og.png">
+  <meta name="twitter:image" content="https://tower.rokokol.art/og.png">
   <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
@@ -47,12 +47,23 @@
         <button class="header-control" id="theme" type="button" disabled>
           <svg viewBox="0 0 8 8" aria-hidden="true" shape-rendering="crispEdges"><path id="theme-icon"/></svg>
         </button>
+        <button class="header-control" id="open-guide" type="button" aria-haspopup="dialog"
+                data-i18n-aria-label="guide" data-i18n-title="guide">?</button>
         <a class="header-control" href="https://github.com/rokokol/truck-kun-tower" target="_blank" rel="noopener noreferrer"
            data-i18n-aria-label="github" data-i18n-title="github">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         </a>
       </div>
     </header>
+
+    <dialog id="guide" aria-labelledby="guide-title">
+      <div class="guide-header">
+        <h2 id="guide-title" data-i18n="guide"></h2>
+        <form method="dialog"><button type="submit" data-i18n="guideClose" autofocus></button></form>
+      </div>
+      <p id="guide-status" role="status"></p>
+      <div id="guide-stats"></div>
+    </dialog>
 
     <!-- The two paper screens. Alpine owns them, the board below belongs to game.js -->
     <div id="app" x-data="tower" x-cloak x-show="screen === 'auth' || screen === 'lobby'">
@@ -72,7 +83,7 @@
         <p class="lede" x-text="t('lede')"></p>
         <small class="kicker" x-text="t('kicker')"></small>
 
-        <div class="tabs" role="tablist" :aria-label="t('authTabs')">
+        <div class="tabs" role="tablist" x-show="!sessionCheckFailed" :aria-label="t('authTabs')">
           <button type="button" role="tab" id="tabLogin" aria-controls="authForm"
                   :aria-selected="mode === 'login'" :class="{ on: mode === 'login' }"
                   @click="mode = 'login'; error = ''" x-text="t('login')"></button>
@@ -81,7 +92,7 @@
                   @click="mode = 'register'; error = ''" x-text="t('register')"></button>
         </div>
 
-        <form id="authForm" class="fields" role="tabpanel"
+        <form id="authForm" class="fields" role="tabpanel" x-show="!sessionCheckFailed"
               :aria-labelledby="mode === 'login' ? 'tabLogin' : 'tabRegister'"
               @submit.prevent="submitAuth()">
           <label for="nick" x-text="t('nickname')"></label>
@@ -103,16 +114,12 @@
           <span x-text="text(error)"></span>
         </p>
 
-        <p class="or"><span x-text="t('or')"></span></p>
+        <button type="button" x-show="sessionCheckFailed" @click="window.location.reload()" x-text="t('retrySession')"></button>
+        <p class="or" x-show="!sessionCheckFailed"><span x-text="t('or')"></span></p>
 
-        <button id="start" type="button" @click="playGuest()" :disabled="busy"
+        <button id="start" type="button" x-show="!sessionCheckFailed" @click="playGuest()" :disabled="busy"
                 x-text="t(pendingRoom ? 'join' : 'guest')"></button>
         <p class="fine" x-show="pendingRoom" x-text="t('pendingRoom', { room: pendingRoom })"></p>
-        <fieldset class="sides" x-show="pendingRoom">
-          <legend x-text="t('side')"></legend>
-          <label><input type="radio" name="guestSide" value="defender" x-model="side"> <span x-text="t('defender')"></span></label>
-          <label><input type="radio" name="guestSide" value="attacker" x-model="side"> <span x-text="t('attacker')"></span></label>
-        </fieldset>
 
         <ul class="badges"><li>1 × 1</li><li x-text="t('fiveWaves')"></li><li x-text="t('mode')"></li></ul>
       </section>
@@ -120,12 +127,20 @@
       <section id="lobby" class="screen" x-show="screen === 'lobby'" aria-labelledby="lobbyTitle">
         <h1 id="lobbyTitle" class="screen-title" x-text="t('lobby')"></h1>
 
+        <div class="card">
+          <button id="random-join" type="button" class="wide" @click="joinRandom()"
+                  :disabled="busy && !searching"
+                  x-text="t(searching ? 'stopRandom' : searchLocked ? 'busy' : 'joinRandom')"></button>
+          <p class="fine" x-show="searching" role="timer" x-text="t('searchTime', {elapsed: searchTime})"></p>
+        </div>
+
+        <div x-effect="$el.inert = searchLocked">
         <div class="card profile">
           <small class="cap" x-text="t('profile')"></small>
           <p class="who"><b x-text="user ? user.nickname : ''"></b>
             <span class="presence on" aria-hidden="true"></span></p>
           <p class="fine"><span x-text="t('joinedSince')"></span> <time :datetime="user ? user.createdAt : null" x-text="joinedLabel"></time></p>
-          <button type="button" @click="logout()" x-text="t('logout')"></button>
+          <button type="button" @click="logout()" :disabled="busy" x-text="t('logout')"></button>
         </div>
 
         <p class="notice" role="status" x-show="note" x-text="text(note)"></p>
@@ -133,6 +148,24 @@
           <span class="error-slip-heading" x-text="t('errorHeading')"></span>
           <span x-text="text(lobbyError)"></span>
         </p>
+
+        <section class="card" aria-labelledby="online-title">
+          <small id="online-title" class="cap" x-text="t('onlineCount', {count: onlineCount ?? '—'})"></small>
+          <ul id="online-players" class="people" x-show="onlinePlayers.length">
+            <template x-for="player in onlinePlayers" :key="player.id">
+              <li class="person">
+                <span class="presence on" aria-hidden="true"></span>
+                <b x-text="player.nickname"></b>
+                <span class="row-actions">
+                  <button type="button" @click="createDuel(player.id)" :disabled="busy" x-text="t('inviteFriend')"></button>
+                  <button type="button" class="ghost" x-show="!knowsPlayer(player.id)" @click="addFriend(player.nickname)"
+                          :disabled="busy" x-text="t('onlineAddFriend')"></button>
+                </span>
+              </li>
+            </template>
+          </ul>
+          <p class="empty" x-show="onlineCount !== null && !onlinePlayers.length" x-text="t('onlineEmpty')"></p>
+        </section>
 
         <div class="card">
           <small class="cap" x-text="t('friends')"></small>
@@ -206,12 +239,13 @@
             <label><input type="radio" name="side" value="defender" x-model="side"> <span x-text="t('defender')"></span></label>
             <label><input type="radio" name="side" value="attacker" x-model="side"> <span x-text="t('attacker')"></span></label>
           </fieldset>
+          <label class="fine"><input type="checkbox" x-model="randomOpponent"> <span x-text="t('randomOpponent')"></span></label>
           <button type="button" class="wide" @click="createDuel()" :disabled="busy" x-text="t('createDuel')"></button>
-          <p class="fine" x-text="t('createHint')"></p>
+          <p class="fine" x-text="t(randomOpponent ? 'randomCreateHint' : 'createHint')"></p>
         </div>
 
-        <div class="card" x-show="duels.length">
-          <small class="cap" x-text="t('myDuels')"></small>
+        <section class="card" x-show="duels.length" aria-labelledby="duels-title">
+          <small id="duels-title" class="cap" x-text="t('myDuels')"></small>
           <ul class="people">
             <template x-for="duel in duels" :key="duel.id">
               <li class="duel">
@@ -220,17 +254,59 @@
                   <small class="tag" x-text="statusOf(duel.status)"></small>
                   <small class="tag" x-text="sideOf(duel.mySide)"></small>
                 </span>
+                <small class="fine" x-show="closedReason(duel)" x-text="closedReason(duel)"></small>
                 <span class="row-actions">
-                  <button type="button" @click="continueDuel(duel)" x-text="t('continue')"></button>
-                  <button type="button" class="ghost" @click="copyLink(duel.id)" x-text="t('link')"></button>
-                  <button type="button" class="ghost" @click="cancelDuel(duel)" x-text="t('cancel')"></button>
+                  <button type="button" x-show="String(duel.status).toLowerCase() === 'interrupted'"
+                          @click="createDuel()" x-text="t('newDuel')"></button>
+                  <template x-if="canContinue(duel)">
+                    <span class="row-actions">
+                      <button type="button" @click="continueDuel(duel)" x-text="t('continue')"></button>
+                      <button type="button" class="ghost" @click="copyLink(duel.id)" x-text="t('link')"></button>
+                      <button type="button" class="ghost" @click="cancelDuel(duel)" x-text="t('cancel')"></button>
+                    </span>
+                  </template>
+                  <a class="replay-link" x-show="!canContinue(duel) && duel.replayId" :href="duel.replayId ? replayHref(duel.replayId) : null"
+                     x-text="t('replayLink')"></a>
                 </span>
               </li>
             </template>
           </ul>
-        </div>
+          <nav class="history-pager" aria-labelledby="duels-title" x-show="historyPages.duels.index || historyPages.duels.more">
+            <button type="button" :disabled="historyPages.duels.loading || !historyPages.duels.index" @click="shiftHistory('duels', -1)"
+                    x-text="t('previousPage')"></button>
+            <small aria-live="polite" x-text="t('pageNumber', {page: historyPages.duels.index + 1})"></small>
+            <button type="button" :disabled="historyPages.duels.loading || !historyPages.duels.more" @click="shiftHistory('duels', 1)"
+                    x-text="t('nextPage')"></button>
+          </nav>
+        </section>
 
+        <section class="card" x-show="matches.length" aria-labelledby="history-title">
+          <small id="history-title" class="cap" x-text="t('matchHistory')"></small>
+          <ul class="people">
+            <template x-for="match in matches" :key="match.id">
+              <li class="duel">
+                <div class="duel-line">
+                  <b x-text="matchRival(match)"></b>
+                  <time class="fine" :datetime="match.finishedAt" x-text="matchDate(match)"></time>
+                </div>
+                <span class="row-actions">
+                  <a class="replay-link" x-show="match.hasReplay" :href="match.hasReplay ? replayHref(match.id) : null"
+                     x-text="t('replayLink')"></a>
+                  <small x-show="!match.hasReplay" x-text="t('replayUnavailable')"></small>
+                </span>
+              </li>
+            </template>
+          </ul>
+          <nav class="history-pager" aria-labelledby="history-title" x-show="historyPages.matches.index || historyPages.matches.more">
+            <button type="button" :disabled="historyPages.matches.loading || !historyPages.matches.index" @click="shiftHistory('matches', -1)"
+                    x-text="t('previousPage')"></button>
+            <small aria-live="polite" x-text="t('pageNumber', {page: historyPages.matches.index + 1})"></small>
+            <button type="button" :disabled="historyPages.matches.loading || !historyPages.matches.more" @click="shiftHistory('matches', 1)"
+                    x-text="t('nextPage')"></button>
+          </nav>
+        </section>
         <p class="fine foot" x-text="t('tabNote')"></p>
+        </div>
       </section>
     </div>
 
@@ -243,15 +319,22 @@
         <input id="link" readonly data-i18n-aria-label="inviteLink">
         <button id="copy"></button>
       </details>
-      <small class="game-cap"><span data-i18n="fieldLog"></span> / <span id="role"></span></small>
+      <small class="game-cap" id="game-cap"><span data-i18n="fieldLog"></span> / <span id="role"></span></small>
       <h2 id="status" aria-live="polite"></h2>
       <p id="rival" class="rival"></p>
       <span class="pips" id="pips" aria-hidden="true"></span>
-      <small id="clock" class="clock" aria-live="off"></small>
+      <div class="wave-controls" hidden>
+        <small id="clock" class="clock" aria-live="off" hidden></small>
+        <button id="ready" type="button" disabled></button>
+      </div>
+      <div id="replayTools" class="replay-tools" hidden>
+        <select id="replayWave" data-i18n-aria-label="chooseReplayWave"></select>
+        <button id="replayAgain" type="button" data-i18n="replayAgain" disabled></button>
+      </div>
       <div id="field" hidden>
         <div class="stats">
           <span class="chip"><span data-i18n="keep"></span> <svg class="icon heart" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#heart"/></svg><b id="hp"></b></span>
-          <span class="chip gold"><span data-i18n="gold"></span> <svg class="coin" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#coin"/></svg><b id="budget"></b></span>
+          <span class="chip gold" id="liveBudget"><span data-i18n="gold"></span> <svg class="coin" aria-hidden="true" viewBox="0 0 32 32"><use href="actors.svg#coin"/></svg><b id="budget"></b></span>
         </div>
         <div class="board-frame">
           <div class="board-scroll">
@@ -266,9 +349,7 @@
       <section id="planning" data-i18n-aria-label="waveOrders" hidden>
         <small data-i18n="waveOrders"></small>
         <div id="actions" role="group" data-i18n-aria-label="orderType"></div>
-        <button id="commit" disabled></button>
         <ul id="orders" data-i18n-aria-label="groups" hidden></ul>
-        <button id="ready" disabled></button>
       </section>
       <button id="swap" type="button" hidden data-i18n="swap"></button>
       <p id="swapWait" class="swap-note" role="status" hidden data-i18n="swapWait"></p>
@@ -278,6 +359,7 @@
         <button id="swapNo" type="button" class="ghost" data-i18n="decline"></button>
       </div>
       <div class="after-match" role="group" data-i18n-aria-label="afterMatch" hidden id="afterMatch">
+        <a class="button" id="watchReplay" data-i18n="watchReplay"></a>
         <button id="rematch" type="button" data-i18n="rematch"></button>
         <button id="again" type="button" class="ghost" data-i18n="again"></button>
       </div>
@@ -309,5 +391,6 @@
   <script src="sounds.js?v=@hash@"></script>
   <script src="lobby.js?v=@hash@"></script>
   <script src="game.js?v=@hash@"></script>
+  <script src="guide.js?v=@hash@"></script>
 </body>
 </html>

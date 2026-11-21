@@ -6,8 +6,8 @@ public sealed class MatchService(IUnitOfWork unit) {
     public async Task<List<MatchDto>> RecentAsync(int take = DefaultTake, CancellationToken token = default) =>
         await ToDtos(await unit.Matches.RecentAsync(Size(take), token), token);
 
-    public async Task<List<MatchDto>> MineAsync(Guid me, int take = DefaultTake, CancellationToken token = default) =>
-        await ToDtos(await unit.Matches.ForUserAsync(me, Size(take), token), token);
+    public async Task<List<MatchDto>> MineAsync(Guid me, int take = DefaultTake, CancellationToken token = default, int skip = 0) =>
+        await ToDtos(await unit.Matches.ForUserAsync(me, Size(take), token, Math.Max(0, skip)), token);
 
     public async Task<MatchDetailDto> GetAsync(Guid id, CancellationToken token = default) {
         var match = await unit.Matches.ByIdAsync(id, token) ?? throw AppError.NotFound("Матч не найден");
@@ -15,10 +15,12 @@ public sealed class MatchService(IUnitOfWork unit) {
         return new MatchDetailDto(match.Id, match.RoomId, match.Winner, match.HeartsLeft, match.WavesPlayed,
             match.Note, match.StartedAt, match.FinishedAt,
             Brief(match.DefenderId, names), Brief(match.AttackerId, names),
-            match.Waves.OrderBy(wave => wave.Number)
-                .Select(wave => new WaveDto(wave.Number, wave.HeartsAfter, wave.Damage, wave.Slimes,
-                    wave.SlimesKilled, wave.Groups)).ToList());
+            await unit.Matches.WavesAsync(id, token));
     }
+
+    public async Task<string> ReplayAsync(Guid id, int? wave, CancellationToken token = default) =>
+        (wave is int number ? await unit.Matches.ReplayWaveAsync(id, number, token)
+            : await unit.Matches.ReplayMapAsync(id, token)) ?? throw AppError.NotFound("Запись не найдена");
 
     public async Task<StatsDto> StatsAsync(CancellationToken token = default) {
         var stats = await unit.Matches.StatsAsync(token);
@@ -77,7 +79,8 @@ public sealed class MatchService(IUnitOfWork unit) {
 
     static MatchDto ToDto(MatchRow row, Dictionary<Guid, string> names) =>
         new(row.Id, row.RoomId, row.Winner, row.HeartsLeft, row.WavesPlayed, row.Note,
-            row.StartedAt, row.FinishedAt, Brief(row.DefenderId, names), Brief(row.AttackerId, names));
+            row.StartedAt, row.FinishedAt, Brief(row.DefenderId, names), Brief(row.AttackerId, names),
+            row.ReplayMapJson is not null);
 
     static UserBrief? Brief(Guid? id, Dictionary<Guid, string> names) =>
         id is Guid userId ? new UserBrief(userId, names.GetValueOrDefault(userId, "")) : null;

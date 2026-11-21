@@ -26,7 +26,7 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 ## Where a rule lives
 
 - `Duel.cs` owns prices, waves, ownership limits and the outcome; the browser only replays the frames the server sends, so a rule written in `game.js` alone is not a rule
-- The server closes a wave when its thirty-second clock runs out, so no browser timer decides anything
+- The server closes a wave when its clock runs out, so no browser timer decides anything
 - A finished match reaches PostgreSQL after the room lock is released, never inside it
 - `wwwroot/actors.svg` takes its colours from DDLC theme variables; a page that draws those sprites without the variables shows black silhouettes
 
@@ -45,14 +45,14 @@ docker run --rm --network=host -v "$PWD:/src" -v nuget-cache:/root/.nuget/packag
 - The invite is a plain link with `?room=`; nothing depends on a messenger or a native shell
 - `Dockerfile` replaces `?v=@hash@` in `index.html` with a hash of the marked assets. Cloudflare can keep an asset after its content changes, so the URL must change too
 - The hub at `/bell` carries the room state, friend requests, invitations, swap requests and presence. The JWT travels as `access_token` in the query, the guest seat token as the second argument of `JoinRoom`
-- The game answers both plain HTTP behind the proxy and HTTPS on `8443`; keep both in mind when a change touches URLs or cookies
+- Use `https://tower.rokokol.art/` for public links, with no port suffix
 
 ## Deploy
 
 - The host runs no .NET SDK, so the image is built here and carried over: `docker build --network=host -t truck-kun-tower .`, then `docker save truck-kun-tower | zstd -3 | ssh <host> 'zstd -d | docker load'`, then `cd /opt/truck-kun-tower && docker compose up -d`
 - `rsync -a --exclude .git --exclude bin --exclude obj --exclude .env ./ <host>:/opt/truck-kun-tower/` keeps the sources and the compose file there in step with the repository; the server itself never builds
 - One `docker-compose.yml` serves both machines: host networking, the game on `127.0.0.1:5184`, PostgreSQL in the `tower-db` volume. Only the command differs — `up -d --no-build` here after a build, a plain `up -d` there on the image just loaded
-- `deploy/vps/nginx.conf` is the site for `tower.rokokol.art`; port 443 on that host belongs to the VPN, so the site listens on 80 and Cloudflare terminates visitor TLS with the zone in Flexible mode
+- See `deploy/vps/nginx.conf` for the origin TLS port and the Certbot exception. Do not change the VPN listener
 - The production `.env` holds `POSTGRES_PASSWORD` and `JWT_KEY`; it never reaches git
 - The pre-PostgreSQL history stays untouched in the `vps_tower-data` volume; the game no longer reads it
 

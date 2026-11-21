@@ -7,13 +7,15 @@ import {existsSync} from 'node:fs';
 import {rename, rm} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {fillDefence, LAST_WAVE} from './duel-setup.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const docs = join(repo, 'docs');
 
+const DEFAULT_URL = 'https://tower.rokokol.art';
 const USAGE = `node tools/shots.mjs [options]
 
-  --url <url>     shoot a game other than https://tower.rokokol.art:8443
+  --url <url>     shoot a game other than ${DEFAULT_URL}
   --lang <code>   ru or en, the language the screenshots are taken in (default en)
   --out <dir>     write the screenshots somewhere other than docs/
   -h, --help      this text`;
@@ -27,7 +29,7 @@ function fail(message) {
 }
 
 function parse(argv) {
-  const options = {url: 'https://tower.rokokol.art:8443', lang: 'en', out: docs};
+  const options = {url: DEFAULT_URL, lang: 'en', out: docs};
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
     if (flag === '-h' || flag === '--help') {
@@ -85,8 +87,9 @@ async function api(base, path, {seat, body, method = body ? 'POST' : 'GET'} = {}
   return text ? JSON.parse(text) : null;
 }
 
-// A screenshot is written beside its final name and moved over it only when all three exist, so
-// a run that dies halfway leaves the previous set untouched
+// Five groups of slimes leave the gates in the last wave, so every road into the keep carries one
+const ATTACK = ['runner', 'swarm', 'smart', 'giant', 'armored'];
+
 async function stage(path) {
   // The temporary name keeps the png extension: the browser picks the image format from it
   const temporary = `${path}.part.png`;
@@ -133,6 +136,11 @@ try {
   const room = `/api/duels/${host.id}`;
   const visitor = await api(options.url, `${room}/join`, {body: {side: 'attacker'}});
   const state = await api(options.url, `${room}/state`, {seat: host.seatToken});
+  const bought = await fillDefence(options.url, room, host.seatToken, visitor.seatToken, state)
+    .catch(error => fail(error.message));
+  const last = await api(options.url, `${room}/state`, {seat: host.seatToken});
+  const gates = [...new Set(last.paths.map(path => path[0]))];
+  assert.ok(gates.length >= 2, 'the maze offers one gate, so every group would walk one road');
 
   const board = await context.newPage();
   board.on('pageerror', error => faults.push(error.message));
@@ -141,33 +149,28 @@ try {
   await board.goto(`${options.url}/?room=${host.id}`, {waitUntil: 'networkidle'});
   await board.locator('#actions button[data-action="frost"]').waitFor({timeout: 20000});
 
-  // A frost tower off the road is the picture the README wants: it belongs to the board without
-  // hiding the maze, and the fence on its offered cell shows the trap row at the same time
-  const road = new Set([...state.paths, ...state.alternatePaths].flat());
-  const width = state.width;
-  const wall = state.paths[0].slice(1, -1).flatMap(cell => [cell - 1, cell + 1, cell - width, cell + width])
-    .filter(cell => cell >= 0 && cell < width * state.height && !road.has(cell));
-  assert.ok(wall.length > 0, 'a maze with no cell beside its road cannot hold the frost tower');
-  for (const [action, cell] of [['frost', wall[0]], ['fence', state.fenceCells[0]]]) {
-    await board.locator(`#actions button[data-action="${action}"]`).click();
-    await board.locator(`#cells button[data-cell="${cell}"]`).click();
-    await board.locator('#commit').click();
-    await board.waitForTimeout(400);
-  }
-  await board.waitForTimeout(250);
+  // The defence was bought through the API over the earlier waves, so this page opens on the last
+  // wave with every tower already standing: the picture needs no order of its own
+  await board.reload({waitUntil: 'networkidle'});
+  await board.locator('#actions button[data-action="frost"]').waitFor({timeout: 20000});
+  await board.waitForTimeout(400);
   const planningShot = await stage(join(options.out, 'planning.png'));
   await board.screenshot({path: planningShot.temporary, fullPage: true});
   staged.push(planningShot);
 
-  await api(options.url, `${room}/moves`, {body: {wave: 1, action: 'swarm', cell: state.paths[0][0]}, seat: visitor.seatToken});
-  await api(options.url, `${room}/moves`, {body: {wave: 1, action: 'ready', cell: null}, seat: host.seatToken});
-  await api(options.url, `${room}/moves`, {body: {wave: 1, action: 'ready', cell: null}, seat: visitor.seatToken});
+  for (const [index, type] of ATTACK.entries()) {
+    await api(options.url, `${room}/moves`,
+      {body: {wave: LAST_WAVE, action: type, cell: gates[index % gates.length]}, seat: visitor.seatToken});
+  }
+  await api(options.url, `${room}/moves`, {body: {wave: LAST_WAVE, action: 'ready', cell: null}, seat: host.seatToken});
+  await api(options.url, `${room}/moves`, {body: {wave: LAST_WAVE, action: 'ready', cell: null}, seat: visitor.seatToken});
   await board.waitForFunction(() => typeof replay !== 'undefined' && replay, undefined, {timeout: 20000});
-  // Long enough for the swarm to be spread over the road, short enough that the wave still runs
+  // Long enough for five groups to spread over the roads, short enough that the wave still runs
   await board.waitForTimeout(4200);
   const battleShot = await stage(join(options.out, 'battle.png'));
   await board.screenshot({path: battleShot.temporary, fullPage: true});
   staged.push(battleShot);
+  console.log(`shots: ${bought} structures stand from the earlier waves`);
 
   const problems = faults.filter(message => !/favicon|ERR_BLOCKED/.test(message));
   assert.equal(problems.length, 0, `the page raised ${problems[0]}`);

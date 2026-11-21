@@ -14,19 +14,28 @@ public sealed class DuelsController(RoomService rooms) : ControllerBase {
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CreateDuelRequest? request,
         CancellationToken cancellationToken) {
         var side = Sides.Parse(request?.Side) ?? Sides.Defender;
-        var session = await rooms.CreateAsync(HttpContext.Player(), side, cancellationToken);
+        var session = await rooms.CreateAsync(HttpContext.Player(), side, cancellationToken,
+            randomOpponent: request?.RandomOpponent ?? false);
         return Created($"/api/duels/{session.Id}", session);
     }
 
     [HttpGet("")]
     [Authorize]
-    public async Task<List<RoomDto>> Mine(CancellationToken cancellationToken) =>
-        await rooms.MineAsync(Me, cancellationToken);
+    public async Task<List<RoomDto>> Mine(int? take, int? skip, CancellationToken cancellationToken) =>
+        await rooms.MineAsync(Me, cancellationToken, take ?? 20, skip ?? 0);
 
     [HttpGet("{id}")]
     [AllowAnonymous]
     public async Task<RoomDto> Show(string id, CancellationToken cancellationToken) =>
         await rooms.RoomAsync(HttpContext.Player(), id, cancellationToken);
+
+    [HttpPost("random/join")]
+    [Authorize]
+    public async Task<ActionResult<DuelSession>> JoinRandom(CancellationToken cancellationToken) {
+        var session = await rooms.JoinRandomAsync(Me, cancellationToken);
+        if (session is null) return NoContent();
+        return session;
+    }
 
     [HttpPost("{id}/join")]
     [AllowAnonymous]

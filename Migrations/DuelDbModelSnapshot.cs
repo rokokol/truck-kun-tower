@@ -108,6 +108,9 @@ namespace truckkuntower.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ReplayMapJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("RoomId")
                         .IsRequired()
                         .HasColumnType("text");
@@ -228,6 +231,9 @@ namespace truckkuntower.Migrations
 
                     b.Property<int>("Number")
                         .HasColumnType("integer");
+
+                    b.Property<string>("ReplayJson")
+                        .HasColumnType("jsonb");
 
                     b.Property<int>("Slimes")
                         .HasColumnType("integer");

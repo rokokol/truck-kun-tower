@@ -60,10 +60,11 @@ await using (var scope = app.Services.CreateAsyncScope()) {
             await Task.Delay(TimeSpan.FromSeconds(3));
         }
     }
-    // A board lives in memory, so a room from before this start can never be played again
+    // A board lives in memory, so a room from before this start can never be played again. Interrupted
+    // rather than abandoned: nothing went idle, the restart itself closed the board
     var dead = await db.Rooms
         .Where(room => room.Status == RoomStatus.Waiting || room.Status == RoomStatus.Playing).ToListAsync();
-    foreach (var room in dead) room.Status = RoomStatus.Abandoned;
+    foreach (var room in dead) room.Status = RoomStatus.Interrupted;
     var stale = await db.DuelInvites.Where(invite => invite.Status == InviteStatus.Pending).ToListAsync();
     foreach (var invite in stale) {
         invite.Status = InviteStatus.Expired;
@@ -86,5 +87,6 @@ app.UseStaticFiles(new StaticFileOptions {
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapGet("/api/rules", Duel.Guide).AllowAnonymous();
 app.MapHub<Bell>("/bell");
 app.Run();

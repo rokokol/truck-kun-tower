@@ -1,26 +1,36 @@
-using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 
-// Who has a live websocket right now. Friends see the dot change, nothing else depends on it.
+// One account can have multiple live SignalR connections.
 public sealed class Presence {
-    readonly ConcurrentDictionary<Guid, int> connections = new();
+    readonly Dictionary<Guid, int> connections = new();
+    readonly object gate = new();
 
-    // True when the user just came online, so the caller knows to announce it once
-    public bool Arrive(Guid userId) => connections.AddOrUpdate(userId, 1, (_, count) => count + 1) == 1;
+    public bool Arrive(Guid userId) {
+        lock (gate) return (connections[userId] = connections.GetValueOrDefault(userId) + 1) == 1;
+    }
+
     public bool Leave(Guid userId) {
-        if (!connections.TryGetValue(userId, out var count)) return false;
-        if (count > 1) {
+        lock (gate) {
+            if (!connections.TryGetValue(userId, out var count)) return false;
+            if (count == 1) return connections.Remove(userId);
             connections[userId] = count - 1;
             return false;
         }
-        return connections.TryRemove(userId, out _);
     }
-    public bool IsOnline(Guid userId) => connections.ContainsKey(userId);
+
+    public Guid[] Snapshot() {
+        lock (gate) return connections.Keys.ToArray();
+    }
+
+    public bool IsOnline(Guid userId) {
+        lock (gate) return connections.ContainsKey(userId);
+    }
 }
 
 // The one live channel of the site: room state, invitations, friend requests and presence.
 // A guest connects without a token and proves a seat with SeatOf, so the link-only game stays live too.
 public class Bell(Presence presence, Rooms rooms, IHubContext<Bell> hub, IUnitOfWork unit, ILogger<Bell> log) : Hub {
+    static readonly object BoardKey = new();
     public static string RoomGroup(string id) => $"room:{id}";
     public static string UserGroup(Guid id) => $"user:{id}";
 
@@ -33,6 +43,7 @@ public class Bell(Presence presence, Rooms rooms, IHubContext<Bell> hub, IUnitOf
     }
 
     public override async Task OnDisconnectedAsync(Exception? error) {
+        Detach();
         if (Context.User?.UserId() is Guid id && presence.Leave(id)) {
             try {
                 await TellFriends(id, online: false);
@@ -47,8 +58,26 @@ public class Bell(Presence presence, Rooms rooms, IHubContext<Bell> hub, IUnitOf
     public async Task JoinRoom(string roomId, string? seatToken) {
         var game = rooms.Get(roomId) ?? throw new HubException("Комната не найдена");
         var who = new PlayerRef(Context.User?.UserId(), seatToken);
-        if (game.SeatOf(who) < 0) throw new HubException("Это место не ваше");
+        if (Context.Items.TryGetValue(BoardKey, out var held) && held is ValueTuple<string, Duel> current &&
+            current.Item1 != roomId) await LeaveRoom(current.Item1);
+        lock (game) {
+            if (rooms.Get(roomId) != game || !game.Watch(who, Context.ConnectionId))
+                throw new HubException("Это место не ваше");
+            Context.Items[BoardKey] = (roomId, game);
+        }
         await Groups.AddToGroupAsync(Context.ConnectionId, RoomGroup(roomId));
+    }
+
+    public async Task LeaveRoom(string roomId) {
+        if (!Context.Items.TryGetValue(BoardKey, out var value) ||
+            value is not ValueTuple<string, Duel> held || held.Item1 != roomId) return;
+        Detach();
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, RoomGroup(roomId));
+    }
+
+    void Detach() {
+        if (!Context.Items.Remove(BoardKey, out var value) || value is not ValueTuple<string, Duel> held) return;
+        lock (held.Item2) held.Item2.Unwatch(Context.ConnectionId, DateTime.UtcNow);
     }
 
     async Task TellFriends(Guid id, bool online) {

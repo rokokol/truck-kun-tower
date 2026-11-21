@@ -2,14 +2,23 @@ using System.Collections.Immutable;
 using System.Security.Cryptography;
 
 public sealed class Duel {
+    static long roomSequence;
+    internal bool RandomOpponent { get; init; }
+    internal long CreationOrder { get; } = Interlocked.Increment(ref roomSequence);
+    internal static readonly TimeSpan DisconnectGrace = TimeSpan.FromSeconds(45);
+    static readonly TimeSpan PollWindow = TimeSpan.FromSeconds(12);
     public const int Defender = 0, Attacker = 1;
     const int WaveCount = 5, ThinkTime = 60;
     const int ReplayTickMs = 270, ReplayMaxMs = 52000, FightTickLimit = 2048;
     const int CarrierPassengers = 5, SpikeCharges = 5, SpikeDamage = 4;
-    const int PulseTargets = 3;
     const int FenceHealth = 16, KeepHealth = 10;
-    const int RangedRadius = 2, RangedAmmo = 10, RangedCooldown = 4;
+    const int RangedAmmo = 10, RangedCooldown = 4;
     const int StructureShotDamage = 4, KeepShotDamage = 1;
+    static readonly int[] DefenderBudget = [11, 12, 14, 16, 18], AttackerBudget = [16, 17, 20, 24, 29];
+    static readonly ImmutableDictionary<string, int[]> AttackRows = new Dictionary<string, int[]> {
+        ["bolt"] = Zone(3), ["cannon"] = Zone(2), ["pulse"] = Zone(2), ["frost"] = Zone(1),
+        ["ranged"] = Zone(2)
+    }.ToImmutableDictionary();
     static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 8, Frost: 6, Spikes: 3, Mine: 3,
         Swarm: 4, Giant: 7, Runner: 3, Armored: 8, Ranged: 14, Apc: 12, Fence: 4);
     readonly record struct PriceList(int Bolt, int Pulse, int Cannon, int Frost, int Spikes, int Mine,
@@ -32,13 +41,14 @@ public sealed class Duel {
         public int Max { get; } = hp;
     }
     readonly record struct Purchase(string Type, int Cell);
-    readonly record struct Mob(int X, int Y, string Kind, bool Frozen, int Id, int Hp, int Max);
-    readonly record struct Fence(int Cell, int Hp, int Max);
-    readonly record struct BuildingView(string Type, int Cell, int Hp, int Max);
-    readonly record struct Target(int Cell, int X, int Y);
-    readonly record struct SiegeShot(int Cell, int X, int Y, int MobId);
+    internal readonly record struct Mob(int X, int Y, string Kind, bool Frozen, int Id, int Hp, int Max, int Facing);
+    internal readonly record struct Fence(int Cell, int Hp, int Max);
+    internal readonly record struct BuildingView(string Type, int Cell, int Hp, int Max);
+    internal readonly record struct DefenseView(int Hp, ImmutableArray<BuildingView> Buildings, ImmutableArray<Fence> Fences);
+    internal readonly record struct Target(int Cell, int X, int Y);
+    internal readonly record struct SiegeShot(int Cell, int X, int Y, int MobId);
     readonly record struct SiegeTarget(int Cell, Building? Tower = null);
-    readonly record struct Frame(int Hp, ImmutableArray<Mob> Mobs, ImmutableArray<Target> Shots,
+    internal readonly record struct Frame(int Hp, ImmutableArray<Mob> Mobs, ImmutableArray<Target> Shots,
         ImmutableArray<Target> Aims, ImmutableArray<Fence> Fences, ImmutableArray<BuildingView> Buildings,
         ImmutableArray<SiegeShot> Siege);
 
@@ -46,24 +56,35 @@ public sealed class Duel {
     // A sideshow of keys used to be the whole identity; now it is only the guest's half of it.
     public sealed class Seat {
         public Guid? UserId { get; init; }
+        internal DateTime LastSeen { get; set; } = DateTime.UtcNow;
+        internal DateTime? LastPoll { get; set; }
         public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
     }
     readonly Seat?[] seats = new Seat?[2];
+    readonly Dictionary<string, Seat> watchers = new();
+    readonly bool[] acted = new bool[2];
     int? swapBy;
     Maze maze = new();
     readonly bool[] ready = new bool[2];
-    readonly int[] gold = [10, 16];
+    readonly int[] gold = [DefenderBudget[0], AttackerBudget[0]];
+    readonly HashSet<int> refundableCells = [];
     readonly List<Building> towers = [];
     readonly Dictionary<int, int> fences = [];
     readonly List<Purchase> orders = [];
     ImmutableArray<Frame> frames = [];
+    ImmutableArray<BuildingView> revealedBuildings = [];
+    ImmutableArray<Fence> revealedFences = [];
+    DefenseView? replayStart;
     int hp = KeepHealth;
     int last;
 
-    public sealed record WaveWrite(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled, int Groups);
-    public sealed record ResultWrite(Guid Id, Guid? DefenderId, Guid? AttackerId,
+    internal sealed record ReplayMap(int Width, int Height, int[][] Paths, int[][] AlternatePaths, int WaveCount);
+    internal sealed record ReplayWave(int ReplayMs, DefenseView ReplayStart, ImmutableArray<Frame> Frames);
+    internal sealed record WaveWrite(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled,
+        int Groups, ReplayWave Replay);
+    internal sealed record ResultWrite(Guid Id, Guid? DefenderId, Guid? AttackerId,
         DateTime StartedAt, DateTime FinishedAt, int WavesPlayed,
-        int HeartsLeft, string Winner, bool Survivor, WaveWrite[] Log);
+        int HeartsLeft, string Winner, bool Survivor, WaveWrite[] Log, ReplayMap Map);
 
     Guid matchId = Guid.NewGuid();
     DateTime startedAt = DateTime.UtcNow;
@@ -73,7 +94,7 @@ public sealed class Duel {
     readonly List<WaveWrite> log = [];
     ResultWrite? result;
 
-    public ResultWrite? TakeResult() {
+    internal ResultWrite? TakeResult() {
         var finished = result;
         result = null;
         return finished;
@@ -82,7 +103,7 @@ public sealed class Duel {
     public bool Joined => seats[Defender] is not null && seats[Attacker] is not null;
     public bool IsFull => Joined;
     public int Occupied => (seats[Defender] is null ? 0 : 1) + (seats[Attacker] is null ? 0 : 1);
-    bool Done => last >= WaveCount || hp == 0;
+    internal bool Done => last >= WaveCount || hp == 0;
     public bool Expired => Joined && !Done && deadline is { } end && DateTime.UtcNow >= end;
     int SecondsLeft => !Done && deadline is { } end
         ? Math.Max(0, (int)Math.Ceiling((end - DateTime.UtcNow).TotalSeconds)) : 0;
@@ -98,6 +119,39 @@ public sealed class Duel {
             } else if (who.SeatToken is { } token && TokensMatch(seat.Token, token)) return side;
         }
         return -1;
+    }
+
+    bool Watching(Seat seat) => watchers.ContainsValue(seat);
+    internal bool CanMatch => RandomOpponent && !Joined && watchers.Count > 0;
+    bool BothPresent(DateTime now) => seats.All(seat => seat is not null &&
+        (Watching(seat) || (seat.LastPoll is { } poll && now - poll < PollWindow)));
+
+    internal void Poll(int side, DateTime now) {
+        if (seats[side] is not { } seat) return;
+        seat.LastSeen = now;
+        if (!Watching(seat)) seat.LastPoll = now;
+    }
+
+    internal bool Watch(PlayerRef who, string connection) {
+        int side = SeatOf(who);
+        if (side < 0) return false;
+        var seat = seats[side]!;
+        seat.LastSeen = DateTime.UtcNow;
+        watchers[connection] = seat;
+        return true;
+    }
+
+    internal void Unwatch(string connection, DateTime now) {
+        if (!watchers.Remove(connection, out var seat) || Watching(seat)) return;
+        seat.LastSeen = now;
+        seat.LastPoll = null;
+    }
+
+    internal bool ShouldRetire(DateTime now) {
+        bool Gone(Seat seat) => !Watching(seat) && now - seat.LastSeen >= DisconnectGrace;
+        if (Done) return now >= replayEndsAt && seats.OfType<Seat>().All(Gone);
+        if (seats.OfType<Seat>().Any(Gone)) return true;
+        return Joined && deadline is { } end && now >= end && BothPresent(now) && acted.Contains(false);
     }
 
     static bool TokensMatch(string left, string right) =>
@@ -147,7 +201,10 @@ public sealed class Duel {
         return true;
     }
 
+    internal int ResolvedWaves => last;
+
     public object View(int seat, string? opponent = null) => new {
+        randomOpponent = RandomOpponent,
         joined = Joined, seat, side = Sides.Name(seat), last, done = Done, locked = ready[seat],
         gold = gold[seat], hp, maxHp = KeepHealth,
         matchId, deadline, secondsLeft = SecondsLeft, replayMs,
@@ -156,13 +213,14 @@ public sealed class Duel {
         opponent, opponentId = UserAt(1 - seat),
         width = Maze.Width, height = Maze.Height,
         paths = maze.Routes.Values.ToArray(),
-        alternatePaths = maze.RouteOptions.Values.SelectMany(options => options.Skip(1)).ToArray(),
+        alternatePaths = AlternatePaths(),
         fenceCells = maze.FenceCells,
         trapCells = seat == Defender ? TrapCells() : [],
-        fences = FenceSnapshot(),
-        towers = buildingsNow(),
+        fences = seat == Defender ? FenceSnapshot() : revealedFences,
+        towers = seat == Defender ? buildingsNow() : revealedBuildings,
         orders = seat == Attacker ? orders.ToArray() : [],
-        prices = Prices, limits = Limits, frames
+        refundableCells = seat == Defender ? refundableCells.ToArray() : Array.Empty<int>(),
+        prices = Prices, limits = Limits, attackRows = AttackRows, frames, replayStart
     };
 
     public IResult? Apply(int seat, Move move) {
@@ -178,24 +236,27 @@ public sealed class Duel {
                 return Results.BadRequest();
             gold[Attacker] += PriceOf(orders[index].Type)!.Value;
             orders.RemoveAt(index);
+            acted[seat] = true;
             return null;
         }
-        // A structure bought this turn goes back the same way an order does: the gold returns with it
         if (move.Action == "unbuild") {
             if (seat != Defender || move.Cell is not int site) return Results.BadRequest();
             if (towers.FirstOrDefault(t => t.Cell == site) is { } built) {
-                gold[Defender] += PriceOf(built.Type)!.Value;
+                if (refundableCells.Remove(site)) gold[Defender] += PriceOf(built.Type)!.Value;
                 towers.Remove(built);
+                acted[seat] = true;
                 return null;
             }
             if (fences.Remove(site, out _)) {
-                gold[Defender] += Prices.Fence;
+                if (refundableCells.Remove(site)) gold[Defender] += Prices.Fence;
+                acted[seat] = true;
                 return null;
             }
             return Results.Conflict();
         }
         if (move.Action == "ready") {
             ready[seat] = true;
+            acted[seat] = true;
             if (ready[Defender] && ready[Attacker]) Resolve();
             return null;
         }
@@ -222,6 +283,8 @@ public sealed class Duel {
         if (fence) fences.Add(cell, FenceHealth);
         else if (tower) towers.Add(new Building(move.Action!, cell, TowerHealth(move.Action!)));
         else orders.Add(new(move.Action!, cell));
+        if (fence || tower) refundableCells.Add(cell);
+        acted[seat] = true;
         return null;
     }
 
@@ -236,13 +299,18 @@ public sealed class Duel {
 
     void Reset() {
         maze = new Maze();
-        gold[Defender] = 10;
-        gold[Attacker] = 16;
+        gold[Defender] = DefenderBudget[0];
+        gold[Attacker] = AttackerBudget[0];
+        refundableCells.Clear();
         towers.Clear();
         fences.Clear();
         orders.Clear();
         Array.Clear(ready);
+        Array.Clear(acted);
         frames = [];
+        revealedBuildings = [];
+        revealedFences = [];
+        replayStart = null;
         log.Clear();
         swapBy = null;
         hp = KeepHealth;
@@ -274,38 +342,48 @@ public sealed class Duel {
 
     // The clock runs the wave down for a player who stopped answering
     public bool CloseIfExpired() {
-        if (!Joined || !Expired) return false;
+        if (!Expired || !BothPresent(DateTime.UtcNow) || acted.Contains(false)) return false;
         ready[Defender] = true;
         ready[Attacker] = true;
         Resolve();
         return true;
     }
 
+    int[][] AlternatePaths() => maze.RouteOptions.Values.SelectMany(options => options.Skip(1)).ToArray();
+
     void Resolve() {
         last++;
         int before = hp, groups = orders.Count;
+        var start = new DefenseView(hp, buildingsNow(), FenceSnapshot());
+        replayStart = start;
         var (replay, spawned, killed) = Fight();
         frames = replay;
+        revealedBuildings = buildingsNow();
+        revealedFences = FenceSnapshot();
         var now = DateTime.UtcNow;
         replayMs = Math.Min(frames.Length * ReplayTickMs, ReplayMaxMs);
         replayEndsAt = now.AddMilliseconds(replayMs);
-        log.Add(new WaveWrite(last, hp, before - hp, spawned, killed, groups));
+        log.Add(new WaveWrite(last, hp, before - hp, spawned, killed, groups, new(replayMs, start, frames)));
         swapBy = null;
         orders.Clear();
+        refundableCells.Clear();
         Array.Clear(ready);
-        if (Done) result = new ResultWrite(matchId, UserAt(Defender), UserAt(Attacker),
-            startedAt, now, last, hp,
-            hp == 0 ? "Attacker" : "Defender", hp > 0, log.ToArray());
-        else {
-            int multiplier = 1 << (last - 1);
-            gold[Defender] += 4 * multiplier;
-            gold[Attacker] += 6 * multiplier;
+        Array.Clear(acted);
+        if (Done) {
+            result = new ResultWrite(matchId, UserAt(Defender), UserAt(Attacker), startedAt, now, last, hp,
+                hp == 0 ? "Attacker" : "Defender", hp > 0, log.ToArray(),
+                new(Maze.Width, Maze.Height, maze.Routes.Values.ToArray(), AlternatePaths(), last));
+            log.Clear();
+        } else {
+            gold[Defender] = DefenderBudget[last];
+            gold[Attacker] = AttackerBudget[last];
             deadline = replayEndsAt.AddSeconds(ThinkTime);
         }
     }
 
     sealed class Slime(int[] path, string kind, int health) {
         int index;
+        int facing = 1;
         int nextStep;
         bool frozen;
         int lastFrozenAt = -1;
@@ -322,7 +400,7 @@ public sealed class Duel {
         int KeepCell => path[^1];
 
         public void AssignId(int waveId) => id = waveId;
-        public Mob Snapshot() => new(X, Y, Kind, Frozen, id, Health, maxHealth);
+        public Mob Snapshot() => new(X, Y, Kind, Frozen, id, Health, maxHealth, facing);
         public string Kind { get; } = kind;
         public int Cell => path[index];
         public int Remaining => path.Length - 1 - index;
@@ -334,7 +412,7 @@ public sealed class Duel {
 
         public int ReachKeep() {
             leftRoute = true;
-            return Kind switch { "giant" => 4, "balaclava" => 2, _ => 1 };
+            return ContactDamage(Kind);
         }
 
         public Slime? Release(int tick, int health) {
@@ -358,9 +436,17 @@ public sealed class Duel {
         int BaseInterval => Kind switch {
             "runner" or "balaclava" => 1, "giant" or "ranged" => 3, "armored" or "apc" => 4, _ => 2
         };
-        int FenceHits => Kind is "giant" or "armored" ? 3 : 1;
+        int FenceHits => FenceDamage(Kind);
 
-        public void Spawn(int tick) => nextStep = tick + BaseInterval;
+        public void Spawn(int tick) {
+            nextStep = tick + BaseInterval;
+            for (int i = index + 1; i < path.Length; i++) {
+                int dx = path[i] % Maze.Width - X;
+                if (dx == 0) continue;
+                facing = Math.Sign(dx);
+                break;
+            }
+        }
         public bool Slow() {
             // Without this guard, a frost tower can freeze the same slime again before it moves.
             if (lastFrozenAt == index) return false;
@@ -370,11 +456,12 @@ public sealed class Duel {
         public bool Frozen => frozen;
         public void Damage(int amount) => Health -= Kind == "armored" ? Math.Max(1, amount / 2) : amount;
 
+        bool InSiegeReach(int cell) => InZone(AttackRows["ranged"], cell % Maze.Width - X, cell / Maze.Width - Y);
         int SiegeDistance(int cell) => Math.Max(Math.Abs(cell % Maze.Width - X), Math.Abs(cell / Maze.Width - Y));
 
         public bool AimSiege(List<Building> towers, Dictionary<int, int> fences, int keepHp) {
             if (shotsLeft == 0 || Health <= 0 || keepHp <= 0) return false;
-            if (siegeTarget is { } held && SiegeDistance(held.Cell) <= RangedRadius &&
+            if (siegeTarget is { } held && InSiegeReach(held.Cell) &&
                 (held.Tower is { } heldTower ? heldTower.Hp > 0 && towers.Contains(heldTower) :
                     held.Cell == KeepCell || fences.ContainsKey(held.Cell))) return true;
 
@@ -382,13 +469,13 @@ public sealed class Duel {
             int bestHp = int.MaxValue, bestDistance = int.MaxValue;
             foreach (var tower in towers) Consider(new(tower.Cell, tower), tower.Hp);
             foreach (var (cell, fenceHp) in fences) Consider(new(cell), fenceHp);
-            if (siegeTarget is null && SiegeDistance(KeepCell) <= RangedRadius)
+            if (siegeTarget is null && InSiegeReach(KeepCell))
                 siegeTarget = new(KeepCell);
             return siegeTarget is not null;
 
             void Consider(SiegeTarget candidate, int targetHp) {
                 int distance = SiegeDistance(candidate.Cell);
-                if (targetHp <= 0 || distance > RangedRadius || targetHp > bestHp ||
+                if (targetHp <= 0 || !InSiegeReach(candidate.Cell) || targetHp > bestHp ||
                     (targetHp == bestHp && distance >= bestDistance)) return;
                 siegeTarget = candidate;
                 bestHp = targetHp;
@@ -429,9 +516,46 @@ public sealed class Duel {
                 }
                 return false;
             }
+            int dx = nextCell % Maze.Width - X;
+            if (dx != 0) facing = Math.Sign(dx);
             index++;
             return true;
         }
+    }
+
+    static int ContactDamage(string kind) => kind switch { "giant" => 4, "balaclava" => 2, "apc" => 0, _ => 1 };
+    static int FenceDamage(string kind) => kind is "giant" or "armored" ? 3 : 1;
+    static int UnitHealth(string kind, int wave) => kind switch {
+        "giant" => 26 + 2 * wave,
+        "armored" => 6 + wave,
+        "runner" => 1,
+        "ranged" => 8 + wave,
+        "apc" => 44 + 3 * wave,
+        "balaclava" => 3 + wave,
+        _ => 2 + wave
+    };
+
+    internal static object Guide() {
+        string[] units = ["swarm", "smart", "runner", "armored", "giant", "ranged", "apc", "balaclava"];
+        string[] structures = ["bolt", "cannon", "pulse", "frost", "spikes", "mine", "fence", "keep"];
+        return new {
+            waveCount = WaveCount,
+            units = units.Select(type => new {
+                type, hpFirst = UnitHealth(type, 1), hpLast = UnitHealth(type, WaveCount),
+                damage = type == "ranged" ? StructureShotDamage : ContactDamage(type),
+                keepDamage = type == "ranged" ? KeepShotDamage : ContactDamage(type),
+                fenceDamage = type == "apc" ? 0 : FenceDamage(type),
+                radius = Radius(type), interval = type == "ranged" ? RangedCooldown : 0
+            }).ToArray(),
+            structures = structures.Select(type => {
+                int hp = type == "keep" ? KeepHealth : type == "fence" ? FenceHealth : TowerHealth(type);
+                int radius = Radius(type);
+                var (damage, interval, _) = radius == 0 ? (type == "spikes" ? SpikeDamage : 0, 0, false) : Stats(type);
+                return new { type, hpFirst = hp, hpLast = hp, damage, radius, interval };
+            }).ToArray()
+        };
+
+        static int Radius(string type) => AttackRows.TryGetValue(type, out var rows) ? rows.Length / 2 : 0;
     }
 
     static int TowerHealth(string type) => type switch {
@@ -447,13 +571,23 @@ public sealed class Duel {
     ImmutableArray<BuildingView> buildingsNow() => towers
         .Select(t => new BuildingView(t.Type, t.Cell, t.Hp, t.Max)).ToImmutableArray();
 
-    static (int Damage, int Range, int Every, bool HitsAll) Stats(string type) => type switch {
-        "bolt" => (4, 9, 6, false),
-        "pulse" => (1, 4, 3, true),
-        "cannon" => (9, 8, 8, false),
-        "frost" => (0, 4, 2, true),
-        _ => (0, 0, 1, false)
+    static (int Damage, int Every, bool HitsAll) Stats(string type) => type switch {
+        "bolt" => (4, 6, false),
+        "pulse" => (1, 3, true),
+        "cannon" => (13, 8, false),
+        "frost" => (0, 2, true),
+        _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
+
+    // Sample the circle at each cell center. Half a cell gives a full row on each axis.
+    static int[] Zone(int radius) => Enumerable.Range(-radius, 2 * radius + 1)
+        .Select(y => radius <= 1 ? radius : (int)Math.Sqrt(Square(radius + .5) - Square(y)))
+        .ToArray();
+
+    static bool InZone(int[] rows, int dx, int dy) {
+        int row = dy + rows.Length / 2;
+        return (uint)row < rows.Length && Math.Abs(dx) <= rows[row];
+    }
 
     static void TriggerTrap(Slime mob, Dictionary<int, Building> traps, ImmutableArray<Target>.Builder shots) {
         if (!traps.TryGetValue(mob.Cell, out var trap) || trap.Hp <= 0) return;
@@ -488,16 +622,9 @@ public sealed class Duel {
                 var options = maze.RouteOptions[order.Cell];
                 var path = kind switch {
                     "smart" => options.MinBy(option => option.Length)!,
-                    _ => options[Random.Shared.Next(options.Length)]
+                    _ => Maze.PickRoute(options, Random.Shared.NextDouble)
                 };
-                int health = kind switch {
-                    "giant" => 26 + 2 * last,
-                    "armored" => 6 + last,
-                    "runner" => 1,
-                    "ranged" => 8 + last,
-                    "apc" => 44 + 3 * last,
-                    _ => 2 + last
-                };
+                int health = UnitHealth(kind, last);
                 queue.Enqueue(new(path, kind, health));
             }
         }
@@ -530,9 +657,10 @@ public sealed class Duel {
             var siege = ImmutableArray.CreateBuilder<SiegeShot>();
             foreach (var tower in towers) {
                 if (IsTrap(tower.Type)) continue;
-                var (damage, range, every, hitsAll) = Stats(tower.Type);
+                var (damage, every, hitsAll) = Stats(tower.Type);
+                var rows = AttackRows[tower.Type];
                 int x = tower.Cell % Maze.Width, y = tower.Cell / Maze.Width;
-                var inRange = mobs.Where(m => m.Health > 0 && InReach(m)).ToList();
+                var inRange = mobs.Where(m => m.Health > 0 && InZone(rows, m.X - x, m.Y - y)).ToList();
                 if (inRange.Count == 0) continue;
                 var lead = inRange.MinBy(m => m.Remaining)!;
                 aims.Add(new(tower.Cell, lead.X, lead.Y));
@@ -541,10 +669,7 @@ public sealed class Duel {
                     foreach (var mob in inRange.Where(m => m.Slow()))
                         shots.Add(new(tower.Cell, mob.X, mob.Y));
                 } else if (hitsAll) {
-                    // The rune strikes the weakest few, not the whole crowd.
-                    var weakest = inRange.OrderBy(m => m.Health).ThenBy(m => m.Remaining)
-                        .Take(tower.Type == "pulse" ? PulseTargets : inRange.Count).ToList();
-                    foreach (var mob in weakest) Strike(mob, damage);
+                    foreach (var mob in inRange) Strike(mob, damage);
                 } else Strike(lead, damage);
 
                 // A hit lands at once in the simulation, so the shot names the slime's own cell: the
@@ -554,10 +679,6 @@ public sealed class Duel {
                     shots.Add(new(tower.Cell, mob.X, mob.Y));
                 }
 
-                bool InReach(Slime mob) => tower.Type switch {
-                    "frost" => Math.Abs(mob.X - x) <= 1 && Math.Abs(mob.Y - y) <= 1,
-                    _ => Square(mob.X - x) + Square(mob.Y - y) <= range
-                };
             }
 
             // Defense damage must resolve before a gunner can return fire.
@@ -565,7 +686,7 @@ public sealed class Duel {
             killed += mobs.RemoveAll(m => m.Health <= 0);
             // A destroyed carrier cannot release a passenger on this tick.
             for (int i = 0, count = mobs.Count; i < count; i++) {
-                if (mobs[i].Release(tick, 3 + last) is not { } passenger) continue;
+                if (mobs[i].Release(tick, UnitHealth("balaclava", last)) is not { } passenger) continue;
                 TriggerTrap(passenger, traps, shots);
                 AddMob(passenger);
             }
@@ -583,5 +704,5 @@ public sealed class Duel {
         return (replay.ToImmutable(), spawned, killed);
     }
 
-    static int Square(int x) => x * x;
+    static double Square(double x) => x * x;
 }

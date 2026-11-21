@@ -25,6 +25,27 @@ internal sealed class Maze {
         }
     }
 
+    internal static int[] PickRoute(int[][] options, Func<double> roll) {
+        for (int step = 1; options.Length > 1; step++) {
+            int next = options[0][step];
+            if (options.All(path => path[step] == next)) continue;
+
+            // Count each exit once, even when a fork farther down that exit adds more paths
+            var branches = options.GroupBy(path => path[step]).Select(group => (
+                Paths: group.ToArray(), Weight: 1.0 / (group.Min(path => path.Length) - step)
+            )).ToArray();
+            double pick = roll() * branches.Sum(branch => branch.Weight);
+            options = branches[^1].Paths;
+            foreach (var branch in branches) {
+                pick -= branch.Weight;
+                if (pick >= 0) continue;
+                options = branch.Paths;
+                break;
+            }
+        }
+        return options[0];
+    }
+
     static bool IsWinding(int[] path, int[] users) {
         if (path.Length > 39) return false;
         int turns = 0, separate = 0;

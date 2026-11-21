@@ -34,6 +34,9 @@ public sealed class FriendTests {
             Unit.SetupGet(row => row.Users).Returns(Users.Object);
             Unit.SetupGet(row => row.Friendships).Returns(Friendships.Object);
             Unit.SetupGet(row => row.Invites).Returns(Invites.Object);
+            Unit.SetupGet(row => row.Rooms).Returns(Mock.Of<IRoomRepository>());
+            Invites.Setup(repo => repo.PendingForAsync(It.IsAny<string>(), It.IsAny<Guid[]>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
             Unit.Setup(row => row.SaveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
             var proxy = new Mock<IClientProxy>();
@@ -50,7 +53,7 @@ public sealed class FriendTests {
         }
 
         public FriendService Friends => new(Unit.Object, Presence, Hub.Object);
-        public InviteService InviteService => new(Unit.Object, Rooms, Hub.Object);
+        public InviteService InviteService => new(Unit.Object, Rooms, Hub.Object, Presence);
 
         public User User(Guid id, string nickname) {
             var user = new User { Id = id, Nickname = nickname, NicknameKey = Nicknames.Normalize(nickname) };
@@ -95,6 +98,7 @@ public sealed class FriendTests {
         // A live board costs nothing here: no clock runs until somebody joins
         public Duel Live() {
             var game = new Duel();
+            Assert.True(game.TryTake(new PlayerRef(Me, null), Sides.Defender, out _));
             Rooms.Add(Board, game);
             return game;
         }
@@ -322,7 +326,7 @@ public sealed class FriendTests {
     }
 
     [Fact]
-    public async Task Inviting_somebody_who_is_not_a_friend_is_forbidden() {
+    public async Task Inviting_an_offline_stranger_is_forbidden() {
         var h = new Harness();
         h.Live();
         h.User(Mate, "Маша");
@@ -331,6 +335,18 @@ public sealed class FriendTests {
 
         Assert.Equal(403, error.Status);
         h.Invites.Verify(repo => repo.Add(It.IsAny<DuelInvite>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task An_online_player_can_be_invited_without_a_friendship() {
+        var h = new Harness();
+        h.Live();
+        h.User(Me, "Петя");
+        h.User(Mate, "Маша");
+        h.Presence.Arrive(Mate);
+        var invite = await h.InviteService.SendAsync(Me, Mate, Board);
+        Assert.Equal(Board, invite.RoomId);
+        Assert.Equal(Bell.UserGroup(Mate), Assert.Single(h.Sent).Group);
     }
 
     [Fact]
@@ -441,6 +457,22 @@ public sealed class FriendTests {
 
         Assert.Equal(InviteStatus.Declined, invite.Status);
         Assert.Equal("InviteResolved", Assert.Single(h.Sent).Method);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Decline_closes_only_a_waiting_room(bool joined) {
+        var h = new Harness();
+        var game = h.Live();
+        if (joined) Assert.True(game.TryTake(new PlayerRef(Stranger, null), Sides.Attacker, out _));
+        var invite = h.Invite(InviteStatus.Pending, Me, Mate, Board);
+
+        await h.InviteService.RefuseAsync(Mate, invite.Id);
+
+        Assert.Equal(joined, h.Rooms.Get(Board) is not null);
+        Assert.Equal(Bell.UserGroup(Me), Assert.Single(h.Sent).Group);
+        Assert.Contains(joined ? "\"roomClosed\":false" : "\"roomClosed\":true", h.Payload(0));
     }
 
     [Fact]

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 public enum FriendshipStatus { Pending, Accepted }
 public enum InviteStatus { Pending, Accepted, Declined, Cancelled, Expired }
-public enum RoomStatus { Waiting, Playing, Finished, Cancelled, Abandoned }
+public enum RoomStatus { Waiting, Playing, Finished, Cancelled, Abandoned, Interrupted }
 
 public sealed class User {
     public Guid Id { get; set; }
@@ -68,6 +68,7 @@ public sealed class MatchRow {
     public bool Survivor { get; set; }
     // A participant's own label for the series: "реванш", "финал", whatever
     public string Note { get; set; } = "";
+    public string? ReplayMapJson { get; set; }
     public List<WaveRow> Waves { get; set; } = [];
 }
 
@@ -80,6 +81,7 @@ public sealed class WaveRow {
     public int Slimes { get; set; }
     public int SlimesKilled { get; set; }
     public int Groups { get; set; }
+    public string? ReplayJson { get; set; }
     public MatchRow? Match { get; set; }
 }
 
@@ -125,6 +127,7 @@ public sealed class DuelDb(DbContextOptions<DuelDb> options) : DbContext(options
         });
 
         model.Entity<MatchRow>(match => {
+            match.Property(entry => entry.ReplayMapJson).HasColumnType("jsonb");
             match.HasIndex(entry => entry.FinishedAt);
             match.HasIndex(entry => entry.RoomId);
             match.HasIndex(entry => new { entry.DefenderId, entry.FinishedAt });
@@ -132,6 +135,7 @@ public sealed class DuelDb(DbContextOptions<DuelDb> options) : DbContext(options
             match.HasMany(entry => entry.Waves).WithOne(wave => wave.Match)
                 .HasForeignKey(wave => wave.MatchId).OnDelete(DeleteBehavior.Cascade);
         });
+        model.Entity<WaveRow>().Property(entry => entry.ReplayJson).HasColumnType("jsonb");
         model.Entity<WaveRow>().HasIndex(wave => new { wave.MatchId, wave.Number });
     }
 }

@@ -2,6 +2,7 @@
 // The browser talks to these shapes, so a field renamed here is a client change too.
 
 public record UserBrief(Guid Id, string Nickname);
+public record OnlineDto(int Count, List<UserBrief> Players);
 
 public record UserDto(Guid Id, string Nickname, DateTime CreatedAt);
 public record AuthResponse(string Token, DateTime ExpiresAt, UserDto User);
@@ -20,15 +21,15 @@ public record InviteDto(Guid Id, UserBrief From, string RoomId, DateTime Created
 public record InviteCreate(Guid? FriendId, string? RoomId);
 public record InviteAccepted(string RoomId);
 
-public record CreateDuelRequest(string? Side);
+public record CreateDuelRequest(string? Side, bool RandomOpponent = false);
 public record JoinDuelRequest(string? Side);
 public record RoomDto(string Id, string MySide, UserBrief? Opponent, string Status,
-    DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt);
+    DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt, Guid? ReplayId = null);
 public record DuelSession(string Id, string Side, string? SeatToken, RoomDto Room);
 public record SideRequest(string? Side);
 
 public record MatchDto(Guid Id, string RoomId, string Winner, int HeartsLeft, int WavesPlayed,
-    string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker);
+    string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker, bool HasReplay);
 public record MatchDetailDto(Guid Id, string RoomId, string Winner, int HeartsLeft, int WavesPlayed,
     string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker,
     List<WaveDto> Waves);

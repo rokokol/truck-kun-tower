@@ -5,7 +5,7 @@ using Xunit;
 namespace TruckKun.Tower.Tests;
 
 // The numbers a player reads on an order card and the rules they feel in a wave: a price, the
-// keep's hearts, a limit on a rune, the rate of a tower, a refund, and a shot that leads.
+// keep's hearts, area damage, shot intervals and refunds.
 public sealed class BalanceRuleTests {
     static readonly int[] Road = [64, 65, 66, 67, 52, 53, 54, 69, 84, 83, 82];
 
@@ -18,32 +18,57 @@ public sealed class BalanceRuleTests {
     }
 
     [Fact]
-    public void The_rune_strikes_three_weakest_targets_not_the_whole_crowd() {
+    public void The_rune_hits_more_than_three_targets_in_its_zone() {
+        int[] path = [64, 65, 66, 67, 68, 69, 70, 71];
+        var board = Board.Open(path);
+        board.Build("pulse", path[4] + Maze.Width);
+        board.Build("fence", path[6]);
+        board.Order("armored", count: 2);
+        Assert.Contains(board.Play(), frame => frame.Shots.Length > 3);
+    }
+
+    [Fact]
+    public void A_rune_hit_does_one_damage() {
         var board = Board.Open(Road);
-        board.Build("pulse", board.Beside(Road[1]));
-        board.Order("swarm", count: 1);
+        board.Build("pulse", board.Beside(Road[0]));
+        board.Order("giant");
+        var giant = Assert.Single(board.Play()[0].Mobs);
+        Assert.Equal(1, giant.Max - giant.Hp);
+    }
 
-        var frames = board.Play();
-        var full = frames.MaxBy(frame => frame.Shots.Length)!;
-
-        Assert.Equal(3, full.Shots.Length);
-        Assert.Equal(3, full.Shots.Select(shot => shot.TargetCell).Distinct().Count());
-        Assert.All(frames, frame => Assert.InRange(frame.Shots.Length, 0, 3));
+    [Fact]
+    public void Shooting_zones_round_large_corners_and_the_bolt_reaches_farther_than_the_cannon() {
+        var board = Board.Open([64, 65, 66, 67, 68, 69, 70, 71]);
+        Assert.Equal(new[] { 1, 1, 1 }, board.Range("frost"));
+        Assert.Equal(new[] { 1, 2, 2, 2, 1 }, board.Range("cannon"));
+        Assert.Equal(new[] { 1, 2, 3, 3, 3, 2, 1 }, board.Range("bolt"));
+        int bolt = 67 - Maze.Width, cannon = 67 + Maze.Width;
+        board.Build("bolt", bolt);
+        board.Build("cannon", cannon);
+        board.Order("giant");
+        var shots = board.Play()[0].Shots;
+        Assert.Contains(shots, shot => shot.Cell == bolt && shot.TargetCell == 64);
+        Assert.DoesNotContain(shots, shot => shot.Cell == cannon);
     }
 
     [Fact]
     public void A_bolt_fires_more_often_than_a_cannon_but_less_than_every_other_tick() {
-        var board = Board.Open(Road);
-        board.Build("bolt", board.Beside(Road[1]));
-        board.Build("cannon", board.Beside(Road[2]));
-        board.Order("giant");
+        int bolt = ShotInterval("bolt"), cannon = ShotInterval("cannon");
+        Assert.True(bolt < cannon, $"bolt interval {bolt} must be shorter than cannon interval {cannon}");
+        Assert.True(bolt > 2, "the bolt is slower than one shot every other tick");
 
-        var frames = board.Play();
-        int bolt = frames.Sum(frame => frame.Shots.Count(shot => shot.Cell == board.Site("bolt")));
-        int cannon = frames.Sum(frame => frame.Shots.Count(shot => shot.Cell == board.Site("cannon")));
-
-        Assert.True(bolt > cannon, $"bolt {bolt} must fire more often than cannon {cannon}");
-        Assert.True(bolt < frames.Length / 2, "the bolt is slower than one shot every other tick");
+        static int ShotInterval(string type) {
+            var board = Board.Open(Road);
+            var site = board.Beside(Road[0]);
+            board.Build(type, site);
+            board.Build("fence", Road[1]);
+            board.Order("giant");
+            var ticks = board.Play().Select((frame, tick) => (frame, tick))
+                .Where(pair => pair.frame.Shots.Any(shot => shot.Cell == site))
+                .Select(pair => pair.tick).Take(2).ToArray();
+            Assert.Equal(2, ticks.Length);
+            return ticks[1] - ticks[0];
+        }
     }
 
     [Fact]
@@ -68,6 +93,34 @@ public sealed class BalanceRuleTests {
     }
 
     [Fact]
+    public void Unspent_gold_is_replaced_by_the_next_wave_budget() {
+        var board = Board.Open(Road);
+        foreach (var (defender, attacker) in new[] { (12, 17), (14, 20), (16, 24), (18, 29) }) {
+            board.Play();
+            Assert.Equal(defender, board.Gold(Duel.Defender));
+            Assert.Equal(attacker, board.Gold(Duel.Attacker));
+        }
+    }
+
+    [Fact]
+    public void Demolishing_a_tower_or_fence_from_a_previous_wave_does_not_refund_gold() {
+        var board = Board.Open(Road);
+        var tower = board.Beside(Road[1]);
+        board.Build("bolt", tower);
+        board.Build("fence", Road[1]);
+        board.Play();
+        var budget = board.Gold(Duel.Defender);
+        board.Unbuild(tower);
+        board.Unbuild(Road[1]);
+        Assert.Equal(budget, board.Gold(Duel.Defender));
+        Assert.Empty(board.Towers());
+        Assert.False(board.HasFence(Road[1]));
+        board.Build("bolt", tower);
+        board.Unbuild(tower);
+        Assert.Equal(budget, board.Gold(Duel.Defender));
+    }
+
+    [Fact]
     public void A_shot_marks_the_cell_the_struck_slime_stands_on() {
         var board = Board.Open(Road);
         board.Build("cannon", board.Beside(Road[2]));
@@ -85,7 +138,7 @@ public sealed class BalanceRuleTests {
         Assert.All(aimed, pair => Assert.Equal(pair.aim.TargetCell, pair.shot.TargetCell));
     }
 
-    sealed record Mob(int X, int Y, string Kind, int Id) {
+    sealed record Mob(int X, int Y, string Kind, int Id, int Hp, int Max) {
         public int Cell => Y * Maze.Width + X;
     }
     sealed record Target(int Cell, int X, int Y) {
@@ -126,6 +179,7 @@ public sealed class BalanceRuleTests {
 
         public int Keep => View().GetProperty("maxHp").GetInt32();
         public int Price(string action) => View().GetProperty("prices").GetProperty(action).GetInt32();
+        public int[] Range(string action) => View().GetProperty("attackRows").GetProperty(action).Deserialize<int[]>(Json)!;
         public int Gold(int side) => Field<int[]>(duel, "gold")[side];
         public int Site(string type) => sites[type];
         public IReadOnlyList<Building> Towers() =>

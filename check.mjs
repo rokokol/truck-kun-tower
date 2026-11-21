@@ -334,35 +334,40 @@ pass('sides change only when the opponent agrees');
 
 // ── income, the end of a match and the rematch ─────────────────────────────
 let end, defenderView;
+const played = [];
 {
   const id = room.id, A = { token: anna.token }, B = { token: boris.token };
   end = await stateOf(id, A);
   defenderView = await stateOf(id, B);
-  let previousIncome;
+  await call(`/api/matches/${end.matchId}/replay`, { expect: 404 });
   for (let wave = 1; wave <= 5 && !end.done; wave++) {
     const before = end.hp;
     let purchased = await act(id, A, wave, 'swarm', end.paths[0][0]);
     if (wave === 1) purchased = await act(id, A, wave, 'swarm', end.paths[1][0]);
     await act(id, B, wave, 'ready', -1);
     end = await act(id, A, wave, 'ready', -1);
+    played.push(end);
     const nextDefender = await stateOf(id, B);
-    const income = [nextDefender.gold - defenderView.gold, end.gold - purchased.gold];
-    if (end.done) assert.deepEqual(income, [0, 0]);
-    else if (previousIncome) assert.deepEqual(income, previousIncome.map(g => 2 * g));
-    else assert.ok(income.every(g => g > 0));
-    previousIncome = income;
+    const budgets = [[12, 17], [14, 20], [16, 24], [18, 29]];
+    assert.deepEqual([nextDefender.gold, end.gold], end.done ? [defenderView.gold, purchased.gold] : budgets[wave - 1]);
     defenderView = nextDefender;
     assert.ok(end.hp < before);
     assert.ok(end.frames.some((f, i) => i && f.hp < end.frames[i - 1].hp));
   }
   assert.equal(end.done, true);
   assert.equal(end.hp, 0);
+  const closed = (await call('/api/duels', A)).find(row => row.id === id);
+  assert.equal(closed.status, 'Finished');
+  assert.equal(closed.replayId, end.matchId);
+  const journal = await call('/api/matches/mine', A);
+  const recorded = journal.find(row => row.id === end.matchId);
+  assert.ok(recorded?.hasReplay && Number.isFinite(Date.parse(recorded.finishedAt)));
   await act(id, A, end.last + 1, 'swarm', end.paths[0][0], false);
   const restarted = await act(id, A, end.last + 1, 'rematch', -1);
   assert.equal(restarted.last, 0, 'a rematch starts from the first wave');
   assert.equal(restarted.done, false);
   assert.ok(restarted.hp > 0);
-  pass('gold doubles every wave, a keep that falls ends the match and a rematch resets it');
+  pass('gold resets to the wave budget, a keep that falls ends the match and a rematch resets it');
 }
 
 // ── history, notes, statistics ─────────────────────────────────────────────
@@ -376,6 +381,16 @@ assert.ok(match, 'the finished match reaches PostgreSQL');
 assert.equal(match.winner, 'Attacker');
 const detail = await call(`/api/matches/${match.id}`);
 assert.equal(detail.waves.length, detail.wavesPlayed);
+const replayUrl = `/api/matches/${match.id}/replay`;
+assert.deepEqual(await call(replayUrl), { width: end.width, height: end.height, paths: end.paths,
+  alternatePaths: end.alternatePaths, waveCount: played.length });
+for (const wave of played) {
+  assert.deepEqual(await call(`${replayUrl}/${wave.last}`), {
+    replayMs: wave.replayMs, replayStart: wave.replayStart, frames: wave.frames,
+  });
+}
+await call(`${replayUrl}/${played.length + 1}`, { expect: 404 });
+pass('anonymous viewers can read the exact battle frames, one wave at a time, after a rematch');
 const noted = await call(`/api/matches/${match.id}`, { method: 'PATCH', token: anna.token, body: { note: 'реванш' } });
 assert.equal(noted.note, 'реванш');
 await call(`/api/matches/${match.id}`, { method: 'PATCH', token: cath.token, body: { note: 'чужое' }, expect: 403 });
@@ -387,17 +402,143 @@ assert.ok(board.some(row => row.id === anna.id), 'the winner is on the leaderboa
 await call(`/api/matches/${match.id}`, { method: 'DELETE', token: cath.token, expect: 403 });
 await call(`/api/matches/${match.id}`, { method: 'DELETE', token: boris.token, expect: 204 });
 await call(`/api/matches/${match.id}`, { expect: 404 });
+await call(replayUrl, { expect: 404 });
+await call(`${replayUrl}/1`, { expect: 404 });
 pass('a finished match is stored, noted, listed by LINQ and deleted by a participant only');
 
 // ── the room lifecycle through the account API ─────────────────────────────
 {
-  const extra = await post('/api/duels', { side: 'attacker' }, { token: cath.token, expect: 201 });
+  const attempts = await Promise.all([1, 2].map(() => fetch(`${base}/api/duels`, {
+    method: 'POST', headers: { Authorization: `Bearer ${cath.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({side: 'attacker'}),
+  })));
+  assert.deepEqual(attempts.map(response => response.status).sort(), [201, 409]);
+  const extra = await attempts.find(response => response.status === 201).json();
+  await post(`/api/duels/${extra.id}/join`, {}, { token: anna.token, expect: 409 });
+  await call(`/api/duels/${room.id}`, { method: 'DELETE', token: boris.token, expect: 204 });
+  await call(`/api/duels/${room.id}/state`, { token: anna.token, expect: 404 });
   const mine = await call('/api/duels', { token: cath.token });
   assert.ok(mine.some(row => row.id === extra.id && row.mySide === 'attacker'));
   const swappedAlone = await post(`/api/duels/${extra.id}/swap`, {}, { token: cath.token });
   assert.equal(swappedAlone.side, 'defender', 'a lone player moves to the other side at once');
+  await post(`/api/duels/${extra.id}/join`, {}, { token: anna.token });
   await call(`/api/duels/${extra.id}`, { method: 'DELETE', token: cath.token, expect: 204 });
-  pass('my duels are listed, a lone side moves at once and a room can be cancelled');
+  await call(`/api/duels/${extra.id}/state`, { token: anna.token, expect: 404 });
+  pass('one active duel per account, even in parallel; leaving frees both players');
+}
+
+async function roomWatcher(token) {
+  const url = new URL('/bell', base);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('access_token', token);
+  const ws = new WebSocket(url);
+  let invocation = 0;
+  const send = async (frame, responseFor) => {
+    const reply = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(Error('SignalR did not reply')), 5000);
+      ws.addEventListener('message', event => {
+        for (const raw of String(event.data).split('\x1e').filter(Boolean)) {
+          const message = JSON.parse(raw);
+          if (!responseFor(message)) continue;
+          clearTimeout(timeout);
+          if (message.error) reject(Error(message.error)); else resolve(message);
+        }
+      }, {signal: AbortSignal.timeout(5000)});
+    });
+    ws.send(JSON.stringify(frame) + '\x1e');
+    return reply;
+  };
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('SignalR did not connect')), 5000);
+      ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once: true});
+      ws.addEventListener('error', () => { clearTimeout(timer); reject(Error('SignalR connection failed')); }, {once: true});
+    });
+    await send({protocol: 'json', version: 1}, message => !message.type);
+    return {close: () => ws.close(), invoke(target, ...args) {
+      const invocationId = String(++invocation);
+      return send({type: 1, invocationId, target, arguments: args}, msg => msg.type === 3 && msg.invocationId === invocationId);
+    }};
+  } catch (error) {
+    ws.close();
+    throw error;
+  }
+}
+
+// ── random matchmaking ────────────────────────────────────────────────────
+{
+  const ana = {token: anna.token}, bor = {token: boris.token}, cat = {token: cath.token};
+  await post('/api/duels/random/join', undefined, {expect: 401});
+  const privateRoom = await post('/api/duels', {side: 'defender'}, {...ana, expect: 201});
+  await post('/api/duels/random/join', undefined, {...bor, expect: 204});
+  await call(`/api/duels/${privateRoom.id}`, {...ana, method: 'DELETE', expect: 204});
+  const createOpen = who => post('/api/duels', {side: 'attacker', randomOpponent: true}, {...who, expect: 201});
+  const older = await createOpen(ana);
+  const newer = await createOpen(bor);
+  await post('/api/duels/random/join', undefined, {...cat, expect: 204});
+  const watcherA = await roomWatcher(ana.token);
+  const watcherB = await roomWatcher(bor.token);
+  try {
+    await watcherA.invoke('JoinRoom', older.id, null);
+    await watcherB.invoke('JoinRoom', newer.id, null);
+    await post('/api/duels/random/join', undefined, {...ana, expect: 409});
+    const newest = await post('/api/duels/random/join', undefined, cat);
+    assert.equal(newest.id, newer.id, 'the last room in is the first room used');
+    assert.equal(newest.side, 'defender');
+    await call(`/api/duels/${newer.id}`, {...bor, method: 'DELETE', expect: 204});
+    const offline = await createOpen(bor);
+    await watcherB.invoke('JoinRoom', offline.id, null);
+    await watcherB.invoke('LeaveRoom', offline.id);
+    const attempts = await Promise.all([cat, bor].map(who => post('/api/duels/random/join', undefined,
+      {...who, expect: who === bor ? 409 : 200})));
+    assert.equal(attempts[0].id, older.id, 'skip the newest room when its host no longer watches it');
+    await call(`/api/duels/${older.id}`, {...ana, method: 'DELETE', expect: 204});
+    await call(`/api/duels/${offline.id}`, {...bor, method: 'DELETE', expect: 204});
+    const race = await createOpen(ana);
+    await watcherA.invoke('JoinRoom', race.id, null);
+    const joined = await Promise.all([bor,cat].map(who => post('/api/duels/random/join', undefined, {...who, expect: [200,204]})));
+    assert.equal(joined.filter(result => result?.id === race.id).length, 1);
+    assert.equal(joined.filter(result => result === null).length, 1);
+    await call(`/api/duels/${race.id}`, {...ana, method: 'DELETE', expect: 204});
+  } finally {
+    watcherA.close();
+    watcherB.close();
+  }
+  pass('random matchmaking takes the latest live room and assigns each seat only once');
+}
+
+// ── invite cleanup on refusal and match start ──────────────────────────────
+{
+  const host = {token: anna.token}, opponent = {token: boris.token}, third = {token: cath.token};
+  const create = who => post('/api/duels', {side: 'defender'}, {...who, expect: 201});
+  const send = (from, to, roomId) => post('/api/invites', {friendId: to.id, roomId}, {...from, expect: 201});
+  const list = who => call('/api/invites', who);
+  const close = (who, id) => call(`/api/duels/${id}`, {...who, method: 'DELETE', expect: 204});
+  const waiting = await create(host);
+  const refused = await send(host, boris, waiting.id);
+  await call(`/api/invites/${refused.id}`, {...opponent, method: 'DELETE', expect: 204});
+  await call(`/api/duels/${waiting.id}/state`, {...host, expect: 404});
+  assert.equal((await call('/api/duels', host)).find(row => row.id === waiting.id)?.status, 'Cancelled');
+
+  await post('/api/friends/requests', {nickname: anna.nickname}, {...third, expect: 201});
+  const requests = await call('/api/friends/requests', host);
+  const fromCath = requests.incoming.find(request => request.from.id === cath.id);
+  await post(`/api/friends/requests/${fromCath.id}/accept`, {}, host);
+  const otherRoom = await create(third);
+  const incoming = await send(third, anna, otherRoom.id);
+  const live = await create(host);
+  const outgoing = await send(host, boris, live.id);
+  assert.ok((await list(host)).some(invite => invite.id === incoming.id));
+  assert.ok((await list(opponent)).some(invite => invite.id === outgoing.id));
+  await post(`/api/duels/${live.id}/join`, {}, opponent);
+  assert.ok(!(await list(host)).some(invite => invite.id === incoming.id));
+  assert.ok(!(await list(opponent)).some(invite => invite.id === outgoing.id));
+  await call(`/api/invites/${outgoing.id}`, {...opponent, method: 'DELETE', expect: 409});
+  assert.equal((await stateOf(live.id, host)).joined, true);
+  await close(host, live.id);
+  await close(third, otherRoom.id);
+  await call(`/api/friends/${cath.id}`, {...host, method: 'DELETE', expect: 204});
+  pass('decline closes a waiting room; a match start cancels pending invitations for both players');
 }
 
 // ── removing a friend and an account ───────────────────────────────────────

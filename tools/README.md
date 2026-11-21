@@ -10,11 +10,11 @@ The other scripts in this directory draw the rest of `docs/`, and each one expla
 node tools/demo-gif.mjs
 ```
 
-The run needs a game it can reach, Playwright, Chromium and ffmpeg with ffprobe. It records the live site `https://tower.rokokol.art:8443` by default, and `--url` names another one, such as a local `http://127.0.0.1:5184`
+The run needs a game it can reach, Playwright, Chromium and ffmpeg with ffprobe. It records the live site by default. Use `--url` for another game, such as a local `http://127.0.0.1:5184`
 
 `PLAYWRIGHT_CORE` and `CHROMIUM` take the module and the browser, the same way the scripts in `tests/` do, and a bare `chromium` is looked up on `PATH`
 
-The script plays three empty waves with two guest seats and no account, because the attacker needs the gold they leave behind: one order of every unit costs more than the first wave can pay. The fourth wave then carries one order of each type at the gates the maze offers, and the defender meets it with a bolt, a pulse and a frost tower, a fence and spikes, placed where every road meets before the keep
+The script plays the first four waves empty with two guest seats and no account, and spends each wave's gold on the defence, because a wave pays 11, 12, 14, 16 and 18 and the gold does not carry over: the five waves together buy a board no single wave can pay for. Both tools share that setup in `tools/duel-setup.mjs`, which puts towers on walls beside the roads and traps on the road itself, and passes a cell the board refuses rather than ending the run. The last wave then carries five groups of slimes, one for each gate the maze offers
 
 It records that replay and composes the frame itself, with a brand panel on the left and the board with its status line and wave pips on the right, so every run lays the same frame out the same way
 
@@ -38,9 +38,9 @@ A run fails with a non-zero exit and one line naming the cause when a tower cann
 node tools/shots.mjs
 ```
 
-It opens the live site, plays a real duel between two guest seats, buys a frost tower off the road and a fence on its offered cell, then lets the first wave run and shoots the three states: the sign-in card, the planning screen and the fight. Like the GIF it reads `PLAYWRIGHT_CORE` and `CHROMIUM`, and `--url` names another game
+It opens the live site with two guest seats, fills the first four waves with towers through the same setup the GIF uses, then lets the last wave run with five groups of slimes and shoots the three states: the sign-in card, the planning screen and the fight. Like the GIF it reads `PLAYWRIGHT_CORE` and `CHROMIUM`, and `--url` names another game
 
-Each picture is written beside its final name and moved over it only when all three exist, so a run that dies halfway leaves the previous set in place. A run fails when the board never offers the frost tower, when the maze has no cell beside its road or when the page raises an error
+Each picture is written beside its final name and moved over it only when all three exist, so a run that dies halfway leaves the previous set in place. A run fails when the board never offers the frost tower, when the five waves paid for too few structures or when the page raises an error
 
 | Option | Effect |
 | --- | --- |
@@ -50,24 +50,17 @@ Each picture is written beside its final name and moved over it only when all th
 
 ## Banner and link preview
 
-`docs/telegram-banner.png` (640×360) and `docs/og.png` (1200×630) both come from one artwork,
-`docs/truck-kun-tower.jpg`
+`docs/telegram-banner.png` (640×360) and `docs/og.png` (1200×630) both come from one artwork, `docs/truck-kun-tower.jpg`
 
 ```sh
 node tools/banner.mjs
 ```
 
-The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's
-width and the margin below and above it is a black bar. A crop would cut the drawn wordmark or the
-keep, a stretch would show a longer truck than the drawing has, and a bar in the artwork's own paper
-colour glows white on a dark page.
+The artwork is 2:1 and both frames are wider than tall, so the picture is fitted to the frame's width and the margin below and above it is a black bar. A crop would cut the drawn wordmark or the keep, a stretch would show a longer truck than the drawing has, and a bar in the artwork's own paper colour glows white on a dark page
 
-The script writes `docs/og.png` and copies the same bytes to `wwwroot/og.png`, the file
-`wwwroot/index.html` names in `og:image`, so the served copy never drifts from the one `docs/`
-keeps
+The script writes `docs/og.png` and copies the same bytes to `wwwroot/og.png`, the file `wwwroot/index.html` names in `og:image`, so the served copy never drifts from the one `docs/` keeps
 
-A run fails when the artwork is missing, when a frame cannot hold the fitted picture, when
-ImageMagick writes another size, or when the served copy differs from the source by a byte
+A run fails when the artwork is missing, when a frame cannot hold the fitted picture, when ImageMagick writes another size, or when the served copy differs from the source by a byte
 
 ## Icons
 

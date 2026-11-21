@@ -30,20 +30,25 @@ public interface IInviteRepository {
     Task<DuelInvite?> ByIdAsync(Guid id, CancellationToken token = default);
     Task<List<DuelInvite>> IncomingAsync(Guid toId, CancellationToken token = default);
     Task<bool> PendingExistsAsync(Guid fromId, Guid toId, string roomId, CancellationToken token = default);
+    Task<List<DuelInvite>> PendingForAsync(string roomId, Guid[] players, CancellationToken token = default);
     void Add(DuelInvite invite);
 }
 
 public interface IRoomRepository {
     Task<Room?> ByIdAsync(string id, CancellationToken token = default);
-    Task<List<Room>> ForUserAsync(Guid userId, int take = 20, CancellationToken token = default);
+    Task<List<Room>> ForUserAsync(Guid userId, int take = 20, CancellationToken token = default, int skip = 0);
     Task<List<Room>> LiveAsync(CancellationToken token = default);
     void Add(Room room);
 }
 
 public interface IMatchRepository {
     Task<MatchRow?> ByIdAsync(Guid id, CancellationToken token = default);
+    Task<Dictionary<string, Guid?>> LatestReplayIdsAsync(Guid user, string[] roomIds, CancellationToken token = default);
+    Task<string?> ReplayMapAsync(Guid id, CancellationToken token = default);
+    Task<string?> ReplayWaveAsync(Guid id, int wave, CancellationToken token = default);
+    Task<List<WaveDto>> WavesAsync(Guid id, CancellationToken token = default);
     Task<List<MatchRow>> RecentAsync(int take, CancellationToken token = default);
-    Task<List<MatchRow>> ForUserAsync(Guid userId, int take, CancellationToken token = default);
+    Task<List<MatchRow>> ForUserAsync(Guid userId, int take, CancellationToken token = default, int skip = 0);
     Task<MatchStats> StatsAsync(CancellationToken token = default);
     Task<List<LeaderRow>> LeaderboardAsync(int take, CancellationToken token = default);
     void Add(MatchRow match);
@@ -134,6 +139,10 @@ sealed class InviteRepository(DuelDb db) : Repository<DuelInvite>(db), IInviteRe
         Set.AnyAsync(row => row.FromId == fromId && row.ToId == toId && row.RoomId == roomId &&
             row.Status == InviteStatus.Pending, token);
 
+    public Task<List<DuelInvite>> PendingForAsync(string roomId, Guid[] players, CancellationToken token = default) =>
+        Set.Where(row => row.Status == InviteStatus.Pending &&
+            (row.RoomId == roomId || players.Contains(row.FromId) || players.Contains(row.ToId))).ToListAsync(token);
+
     public void Add(DuelInvite invite) => Set.Add(invite);
 }
 
@@ -141,9 +150,9 @@ sealed class RoomRepository(DuelDb db) : Repository<Room>(db), IRoomRepository {
     public Task<Room?> ByIdAsync(string id, CancellationToken token = default) =>
         Set.FirstOrDefaultAsync(room => room.Id == id, token);
 
-    public async Task<List<Room>> ForUserAsync(Guid userId, int take = 20, CancellationToken token = default) =>
+    public async Task<List<Room>> ForUserAsync(Guid userId, int take = 20, CancellationToken token = default, int skip = 0) =>
         await Set.Where(room => room.OwnerId == userId || room.DefenderId == userId || room.AttackerId == userId)
-            .OrderByDescending(room => room.CreatedAt).Take(take).ToListAsync(token);
+            .OrderByDescending(room => room.CreatedAt).ThenByDescending(room => room.Id).Skip(skip).Take(take).ToListAsync(token);
 
     public async Task<List<Room>> LiveAsync(CancellationToken token = default) =>
         await Set.Where(room => room.Status == RoomStatus.Waiting || room.Status == RoomStatus.Playing)
@@ -154,15 +163,36 @@ sealed class RoomRepository(DuelDb db) : Repository<Room>(db), IRoomRepository {
 
 sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchRepository {
     public Task<MatchRow?> ByIdAsync(Guid id, CancellationToken token = default) =>
-        Set.Include(match => match.Waves).FirstOrDefaultAsync(match => match.Id == id, token);
+        Set.FirstOrDefaultAsync(match => match.Id == id, token);
+
+    public Task<Dictionary<string, Guid?>> LatestReplayIdsAsync(Guid user, string[] roomIds, CancellationToken token = default) =>
+        Db.Rooms.Where(room => roomIds.Contains(room.Id)).Select(room => new {
+            room.Id,
+            ReplayId = Set.Where(match => match.RoomId == room.Id && match.ReplayMapJson != null &&
+                (match.DefenderId == user || match.AttackerId == user))
+                .OrderByDescending(match => match.FinishedAt).ThenByDescending(match => match.Id)
+                .Select(match => (Guid?)match.Id).FirstOrDefault()
+        }).ToDictionaryAsync(row => row.Id, row => row.ReplayId, token);
+
+    public Task<string?> ReplayMapAsync(Guid id, CancellationToken token = default) =>
+        Set.Where(match => match.Id == id).Select(match => match.ReplayMapJson).FirstOrDefaultAsync(token);
+
+    public Task<string?> ReplayWaveAsync(Guid id, int wave, CancellationToken token = default) =>
+        Db.Waves.Where(row => row.MatchId == id && row.Number == wave)
+            .Select(row => row.ReplayJson).FirstOrDefaultAsync(token);
+
+    public Task<List<WaveDto>> WavesAsync(Guid id, CancellationToken token = default) =>
+        Db.Waves.Where(row => row.MatchId == id).OrderBy(row => row.Number)
+            .Select(row => new WaveDto(row.Number, row.HeartsAfter, row.Damage, row.Slimes, row.SlimesKilled, row.Groups))
+            .ToListAsync(token);
 
     public async Task<List<MatchRow>> RecentAsync(int take, CancellationToken token = default) =>
         await Set.AsNoTracking().OrderByDescending(match => match.FinishedAt).Take(take).ToListAsync(token);
 
-    public async Task<List<MatchRow>> ForUserAsync(Guid userId, int take, CancellationToken token = default) =>
+    public async Task<List<MatchRow>> ForUserAsync(Guid userId, int take, CancellationToken token = default, int skip = 0) =>
         await Set.AsNoTracking()
             .Where(match => match.DefenderId == userId || match.AttackerId == userId)
-            .OrderByDescending(match => match.FinishedAt).Take(take).ToListAsync(token);
+            .OrderByDescending(match => match.FinishedAt).ThenByDescending(match => match.Id).Skip(skip).Take(take).ToListAsync(token);
 
     public async Task<MatchStats> StatsAsync(CancellationToken token = default) {
         var total = await Set.CountAsync(token);

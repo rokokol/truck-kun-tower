@@ -161,13 +161,17 @@ public sealed class MatchTests {
             Matches.Setup(repo => repo.Remove(It.IsAny<MatchRow>())).Callback<MatchRow>(row => Rows.Remove(row));
             Matches.Setup(repo => repo.ByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((Guid id, CancellationToken _) => Rows.FirstOrDefault(row => row.Id == id));
+            Matches.Setup(repo => repo.WavesAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid id, CancellationToken _) => Rows.Single(row => row.Id == id).Waves
+                    .OrderBy(wave => wave.Number).Select(wave => new WaveDto(wave.Number, wave.HeartsAfter,
+                        wave.Damage, wave.Slimes, wave.SlimesKilled, wave.Groups)).ToList());
             Matches.Setup(repo => repo.RecentAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((int take, CancellationToken _) =>
                     Rows.OrderByDescending(row => row.FinishedAt).Take(take).ToList());
-            Matches.Setup(repo => repo.ForUserAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Guid me, int take, CancellationToken _) => Rows
+            Matches.Setup(repo => repo.ForUserAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+                .ReturnsAsync((Guid me, int take, CancellationToken _, int skip) => Rows
                     .Where(row => row.DefenderId == me || row.AttackerId == me)
-                    .OrderByDescending(row => row.FinishedAt).Take(take).ToList());
+                    .OrderByDescending(row => row.FinishedAt).ThenByDescending(row => row.Id).Skip(skip).Take(take).ToList());
             Matches.Setup(repo => repo.StatsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new MatchStats(1, [new SideWins("Defender", 1)], 5, 7, 1,
                     [new WaveStat(1, 3, 5, 4)]));

@@ -40,7 +40,7 @@ public sealed class RangedCombatTests {
         var path = LeftPath(duel);
         Buy(duel, Duel.Defender, "fence", path[1]);
         Buy(duel, Duel.Defender, "fence", path[2]);
-        var planned = Items(View(duel), "fences");
+        var planned = Items(View(duel, Duel.Defender), "fences");
         Buy(duel, Duel.Attacker, "ranged", path[0]);
         var frames = Fight(duel);
 
@@ -112,6 +112,22 @@ public sealed class RangedCombatTests {
     }
 
     [Fact]
+    public void A_single_cannon_hit_kills_a_full_health_gunner_in_the_last_wave() {
+        var duel = JoinedDuel();
+        for (int wave = 1; wave < 5; wave++) Fight(duel, wave);
+
+        int gate = LeftPath(duel)[0];
+        int tower = gate + Maze.Width;
+        Buy(duel, Duel.Defender, "cannon", tower, wave: 5);
+        Buy(duel, Duel.Attacker, "ranged", gate, wave: 5);
+        var firstFrame = Fight(duel, wave: 5)[0];
+
+        Assert.Equal(tower, Number(Assert.Single(Items(firstFrame, "shots")), "cell"));
+        Assert.Empty(Items(firstFrame, "mobs"));
+        Assert.Empty(Items(firstFrame, "siege"));
+    }
+
+    [Fact]
     public void Replay_mob_metadata_distinguishes_the_carrier_and_its_passengers() {
         var duel = JoinedDuel();
         Buy(duel, Duel.Attacker, "apc", LeftPath(duel)[0]);
@@ -151,17 +167,17 @@ public sealed class RangedCombatTests {
         .Select(path => path.EnumerateArray().Select(cell => cell.GetInt32()).ToArray())
         .Single(path => path[0] % Maze.Width == 0);
 
-    static void Buy(Duel duel, int side, string action, int cell) =>
-        Assert.Null(duel.Apply(side, new(1, action, cell)));
+    static void Buy(Duel duel, int side, string action, int cell, int wave = 1) =>
+        Assert.Null(duel.Apply(side, new(wave, action, cell)));
 
-    static JsonElement[] Fight(Duel duel) {
-        Assert.Null(duel.Apply(Duel.Defender, new(1, "ready", null)));
-        Assert.Null(duel.Apply(Duel.Attacker, new(1, "ready", null)));
+    static JsonElement[] Fight(Duel duel, int wave = 1) {
+        Assert.Null(duel.Apply(Duel.Defender, new(wave, "ready", null)));
+        Assert.Null(duel.Apply(Duel.Attacker, new(wave, "ready", null)));
         return Items(View(duel), "frames");
     }
 
-    static JsonElement View(Duel duel) =>
-        JsonSerializer.SerializeToElement(duel.View(Duel.Attacker), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    static JsonElement View(Duel duel, int seat = Duel.Attacker) =>
+        JsonSerializer.SerializeToElement(duel.View(seat), new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
     static IEnumerable<(int Tick, JsonElement Shot)> Siege(JsonElement[] frames) =>
         frames.SelectMany((frame, tick) => Items(frame, "siege").Select(shot => (tick, shot)));

@@ -10,7 +10,7 @@ const { t: tr, message, feedback } = i18n;
 // roomId is the whole identity of a game: the account travels in the bearer,
 // the guest half in the seat token, and both are asked of Tower on every call
 let roomId = null, seatToken = null;
-let state, field, action, cell, replay, errorNote, copyTimer;
+let state, field, action, cell, replay, archive, errorNote, copyTimer;
 let copyNote = 'copyLink';
 let generation = 0;
 let seen = 0, sequence = 0, sending = false, timer = null, clockTimer = null, quiet = 0;
@@ -69,12 +69,12 @@ function makeField() {
   // Towers keep their own layer, so a turn can be eased by CSS instead of redrawn
   clearBattleActors();
   el('map').innerHTML = `<g id="map-road">${road}</g><g id="map-markers">${markers}</g>` +
-    `<g id="map-route"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
+    `<g id="map-route"></g><g id="map-range"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
     `<g id="map-towers"></g><g id="map-dust"></g><g id="map-mobs"></g><g id="map-structure-hp"></g>` +
     `<g id="map-shots"></g><g id="map-hits"></g>`;
   el('cells').replaceChildren();
   // A swap rebuilds the buttons: the defender sees walls and the attacker sees gates
-  for (const id of defending() ? [...walls, ...fenceCells] : entries) {
+  for (const id of archive ? [] : defending() ? [...walls, ...fenceCells] : entries) {
     const button = document.createElement('button');
     const [x, y] = coords(id);
     button.className = 'cell';
@@ -82,7 +82,11 @@ function makeField() {
     const fenceSite = defending() && pathsSet.has(id);
     button.dataset.kind = defending() ? (fenceSite ? 'fence' : 'wall') : 'entry';
     button.style.gridArea = `${y + 1} / ${x + 1}`;
-    button.onclick = () => { if (button.disabled) return; cell = cell === id ? undefined : id; render(); };
+    button.type = 'button';
+    button.onpointerenter = button.onfocus = () => { if (!button.disabled) previewCell(id); };
+    button.onpointerleave = () => { if (cell === id && !button.matches(':focus-visible')) previewCell(); };
+    button.onblur = () => { if (cell === id && !button.matches(':hover')) previewCell(); };
+    button.onclick = () => { if (!button.disabled && action && planning()) move(action, id); };
     el('cells').append(button);
   }
   paintCells();
@@ -114,7 +118,7 @@ function towerGlyph(type, id, target) {
 }
 
 // Keep each live node so changes to its neighbors do not reset its turn.
-function syncTowers(towers, targets) {
+function syncTowers(towers, targets, damagedCells) {
   const layer = el('map-towers');
   const old = new Map(Array.from(layer.children, node => [node.dataset.building, node]));
   for (const {type, cell: id} of towers) {
@@ -123,9 +127,12 @@ function syncTowers(towers, targets) {
     const target = targets.get(id);
     if (!glyph) {
       layer.insertAdjacentHTML('beforeend', towerGlyph(type, id, target));
+      if (damagedCells.has(id)) shake(layer.lastElementChild);
       continue;
     }
     old.delete(key);
+    // Move the cell, not the inner group that controls the tower's angle.
+    if (damagedCells.has(id)) shake(glyph);
     if (!turning(type) || !target) continue;
     const node = glyph.firstElementChild;
     const from = Number(node.dataset.angle);
@@ -183,7 +190,27 @@ function healthIndicator(x, y, width, hp, max) {
   </g>`;
 }
 
+function shake(node) {
+  if (reducedBattleMotion.matches) return;
+  for (const animation of node.getAnimations()) {
+    if (animation.id === 'structure-hit') animation.cancel();
+  }
+  node.animate([
+    {transform: 'translateX(0)'},
+    {transform: 'translateX(-3px)', offset: .25},
+    {transform: 'translateX(3px)', offset: .65},
+    {transform: 'translateX(0)'},
+  ], {id: 'structure-hit', duration: 160, easing: 'ease-out'});
+}
+
+function cancelShakes() {
+  for (const animation of el('map').getAnimations({subtree: true})) {
+    if (animation.id === 'structure-hit') animation.cancel();
+  }
+}
+
 function clearBattleActors() {
+  cancelShakes();
   for (const id of ['map-mobs', 'map-dust', 'map-shots', 'map-hits']) el(id)?.replaceChildren();
   mobNodes.clear();
   el('map').style.removeProperty('--battle-frame');
@@ -191,6 +218,7 @@ function clearBattleActors() {
 
 reducedBattleMotion.addEventListener('change', () => {
   if (!reducedBattleMotion.matches) return;
+  cancelShakes();
   for (const {node, body} of mobNodes.values()) {
     for (const animation of [...node.getAnimations(), ...body.getAnimations()]) animation.cancel();
   }
@@ -251,6 +279,8 @@ function syncMobs(mobs, moveMs, siegeAngles) {
       layer.append(node);
     }
     const body = prev?.body ?? node.firstElementChild;
+    const facing = m.facing ?? (Math.sign(m.x - (prev?.x ?? m.x)) || prev?.facing || 1);
+    if (facing !== prev?.facing) body.firstElementChild.setAttribute('transform', facing < 0 ? 'scale(-1 1)' : '');
     if (!prev || prev.hp !== m.hp || prev.max !== m.max) {
       node.lastElementChild.innerHTML = healthIndicator(0, -size / 2 - 1.5, width, m.hp, m.max);
     }
@@ -277,7 +307,7 @@ function syncMobs(mobs, moveMs, siegeAngles) {
         if (m.kind === 'apc') dust.push(apcDust(prev.px, prev.py, x - prev.px, y - prev.py));
       }
     }
-    mobNodes.set(m.id, {node, body, x: m.x, y: m.y, px: x, py: y, slot, hp: m.hp, max: m.max});
+    mobNodes.set(m.id, {node, body, x: m.x, y: m.y, px: x, py: y, slot, hp: m.hp, max: m.max, facing});
   }
   el('map-dust').innerHTML = dust.join('');
 }
@@ -311,11 +341,28 @@ function siegeShot(target) {
   </g>`;
 }
 
-function drawBattle(frame, damage, previousBuildings, moveMs = 0) {
+function damagedCells(structures, previous) {
+  const oldHp = new Map(previous?.map(({cell, hp}) => [cell, hp]));
+  return new Set(structures.filter(({cell, hp}) => hp < oldHp.get(cell)).map(({cell}) => cell));
+}
+
+function rangePreview(rows, id) {
+  const [x, y] = coords(id);
+  const radius = Math.floor(rows.length / 2);
+  return rows.map((halfWidth, row) => {
+    const yy = y + row - radius;
+    if (yy < 0 || yy >= state.height) return '';
+    const left = Math.max(0, x - halfWidth);
+    const right = Math.min(state.width - 1, x + halfWidth);
+    return `<rect x="${left * tile}" y="${yy * tile}" width="${(right - left + 1) * tile}" height="${tile}"/>`;
+  }).join('');
+}
+
+function drawBattle(frame, damage, previous, moveMs = 0, showImpact = false) {
   const snapshot = replay?.snapshot ?? state;
   const buildings = frame?.buildings ?? snapshot.towers;
   const towerTypes = new Map(buildings.map(t => [t.cell, t.type]));
-  const previousTypes = new Map(previousBuildings?.map(t => [t.cell, t.type]));
+  const previousTypes = new Map(previous?.buildings.map(t => [t.cell, t.type]));
   const shots = frame?.shots || [];
   const targets = new Map([...(frame?.aims || []), ...shots].map(t => [t.cell, t]));
   const [kx, ky] = point(field.keep);
@@ -326,20 +373,26 @@ function drawBattle(frame, damage, previousBuildings, moveMs = 0) {
   const shown = action === 'smart' ? options.slice(0, 1) : options;
   const routePreview = preview && !defending() && shown.length
     ? shown.map(path => polyline(path, path === options[0] ? 'route-preview' : 'route-preview alternate')).join('') : '';
-  const fences = (frame?.fences ?? snapshot.fences).map(({cell: id, hp, max}) => {
+  const fences = frame?.fences ?? snapshot.fences;
+  const fenceHits = damagedCells(fences, showImpact ? previous?.fences : undefined);
+  const fenceGlyphs = fences.map(({cell: id, hp, max}) => {
     const [x, y] = point(id);
-    return sprite('fence', x, y, 29) + healthIndicator(x, y + 14, 22, hp, max);
+    return `<g${fenceHits.has(id) ? ' data-impact' : ''}>${sprite('fence', x, y, 29)}</g>` +
+      healthIndicator(x, y + 14, 22, hp, max);
   }).join('');
   const ghost = preview && action ? `<g class="ghost">${defending() && action !== 'fence' ? towerGlyph(action, cell) : sprite(action, ...point(cell), 29)}</g>` : '';
   const hp = frame?.hp ?? snapshot.hp;
-  const keep = `<g class="${damage ? 'keep-hit' : ''}">${sprite('keep', kx, ky, 36)}</g>`;
   const hits = damage ? `<text class="damage" x="${kx}" y="${Math.min(ky + 25, state.height * tile - 4)}">−${damage}</text>` : '';
   el('hp').textContent = hp;
   el('map-route').innerHTML = routePreview;
+  const rows = preview && defending() && state.attackRows?.[action];
+  el('map-range').innerHTML = rows ? rangePreview(rows, cell) : '';
   el('map-ghost').innerHTML = ghost;
-  el('map-keep').innerHTML = keep;
-  el('map-fences').innerHTML = fences;
-  syncTowers(buildings, targets);
+  el('map-keep').innerHTML = `<g>${sprite('keep', kx, ky, 36)}</g>`;
+  if (showImpact && hp < previous?.hp) shake(el('map-keep').firstElementChild);
+  el('map-fences').innerHTML = fenceGlyphs;
+  for (const node of el('map-fences').querySelectorAll('[data-impact]')) shake(node);
+  syncTowers(buildings, targets, damagedCells(buildings, showImpact ? previous?.buildings : undefined));
   el('map-structure-hp').innerHTML = buildings.map(({cell: id, type, hp, max}) => {
     const [x, y] = point(id);
     return healthIndicator(x, y + (trap(type) ? 14 : -17), 22, hp, max);
@@ -360,7 +413,7 @@ const remaining = () => clock ? Math.max(0, clock.left - Math.floor((performance
 
 function paintClock() {
   const node = el('clock');
-  const show = Boolean(state && state.joined && !state.done && !state.locked && !replay);
+  const show = Boolean(state && state.joined && !state.done && !replay);
   node.hidden = !show;
   if (!show) return;
   const left = remaining();
@@ -368,9 +421,30 @@ function paintClock() {
   node.classList.toggle('urgent', left <= 5);
 }
 
+function paintPlanHint() {
+  const guidance = !action ? (defending() ? 'chooseBuilding' : 'chooseGroup')
+    : defending() ? (onRoad(action) ? 'chooseRoad' : 'chooseWall') : 'chooseGate';
+  const routeName = action === 'smart' ? 'shortestRoute' : 'randomRoute';
+  const hint = !planning() ? '' : cell !== undefined && !defending()
+    ? tr('selectedGate', { gate: entry(cell), route: message(routeName) }) : tr(guidance);
+  el('hint').textContent = hint;
+  el('hint').hidden = !hint;
+}
+
+function previewCell(id) {
+  if (!planning() || cell === id) return;
+  cell = id;
+  paintPlanHint();
+  drawBattle();
+}
+
 function render(redraw = true) {
   if (!state) return;
   const {gold, done, hp, joined, locked, last, orders, prices, towers} = state;
+  paintRoomControls();
+  const invite = el('invite');
+  invite.hidden = joined;
+  if (joined) invite.open = false;
   const editable = planning();
   const skipping = !defending() && orders.length === 0;
   el('status').textContent = replay ? tr('battle', { wave: replay.snapshot.last, total: waves })
@@ -381,7 +455,7 @@ function render(redraw = true) {
     : !joined ? tr('waitingPlayer')
     : locked ? tr('waitingReady')
     : tr('planning', { wave: last + 1, total: waves });
-  el('rival').textContent = !joined ? tr('noOpponent')
+  el('rival').textContent = !joined ? tr(state.randomOpponent ? 'randomCreateHint' : 'noOpponent')
     : state.opponent ? tr('opponent', { name: state.opponent }) : tr('guestOpponent');
   const round = replay?.snapshot.last ?? last;
   el('pips').innerHTML = Array.from({length: waves}, (_, i) => `<i class="${i < round ? 'done' : ''}${i === round && !done ? ' now' : ''}"></i>`).join('');
@@ -393,46 +467,43 @@ function render(redraw = true) {
   el('swapWait').hidden = !(state.swap === 'mine' && !replay);
   el('swapAsk').hidden = !(state.swap === 'theirs' && !replay);
   el('afterMatch').hidden = !(joined && done) || !!replay;
+  el('watchReplay').href = `?replay=${encodeURIComponent(state.matchId)}`;
   el('field').hidden = false;
   el('planning').hidden = !joined || done || !!replay;
   el('budget').textContent = replay?.gold ?? gold;
   const occupied = new Set([...towers, ...state.fences].map(t => t.cell));
   const trapSites = new Set((state.trapCells ?? []).filter(id => !occupied.has(id)));
-  const blocked = id => occupied.has(id) || (trap(action) && !trapSites.has(id));
-  if (defending() && cell !== undefined && blocked(cell)) cell = undefined;
-  for (const button of el('cells').children) {
-    const id = Number(button.dataset.cell);
-    button.hidden = defending() && (blocked(id) || onRoad(action) !== (button.dataset.kind === 'fence'));
-    button.disabled = !editable || button.hidden;
-    button.setAttribute('aria-pressed', String(editable && cell === id));
-  }
   const used = new Map();
   for (const {type} of defending() ? towers : orders) used.set(type, (used.get(type) ?? 0) + 1);
   if (defending()) used.set('fence', state.fences.length);
   const maxFor = type => trap(type) ? undefined : state.limits?.[type];
   const canBuy = type => editable && gold >= prices[type] && (trap(type)
     ? trapSites.size > 0 : !(maxFor(type) > 0 && (used.get(type) ?? 0) >= maxFor(type)));
+  if (editable && action && !canBuy(action)) action = cell = undefined;
+  const blocked = id => occupied.has(id) || (trap(action) && !trapSites.has(id));
+  if (defending() && cell !== undefined && blocked(cell)) cell = undefined;
+  for (const button of el('cells').children) {
+    const id = Number(button.dataset.cell);
+    button.hidden = defending() && (blocked(id) || onRoad(action) !== (button.dataset.kind === 'fence'));
+    button.disabled = !editable || !action || button.hidden;
+  }
   for (const button of el('actions').children) {
     const type = button.dataset.action;
     const max = maxFor(type);
     button.querySelector('b').innerHTML = fare(prices[type]);
-    button.querySelector('.action-limit').textContent = trap(type) ? tr('trapLimit')
+    const limit = button.querySelector('.action-limit');
+    limit.hidden = !trap(type) && !(max > 0);
+    limit.classList.toggle('counts', max > 0);
+    limit.querySelector('.action-limit-value').textContent = trap(type) ? tr('trapLimit')
       : max > 0 ? tr('limitUsage', { used: used.get(type) ?? 0, max }) : '';
     button.disabled = !canBuy(type);
     button.setAttribute('aria-pressed', String(action === type));
   }
-  const routeName = action === 'smart' ? 'shortestRoute' : 'randomRoute';
-  const [x, y] = cell === undefined ? [] : coords(cell).map(value => value + 1);
-  const guidance = defending() ? (onRoad(action) ? 'chooseRoad' : 'chooseWall') : 'chooseGate';
-  const hint = !editable ? '' : cell === undefined ? tr(guidance)
-    : defending() ? tr('selectedCell', { x, y }) : tr('selectedGate', { gate: entry(cell), route: message(routeName) });
-  el('hint').textContent = hint;
-  el('hint').hidden = !hint;
-  el('commit').innerHTML = action ? `${tr(defending() ? 'build' : 'addGroup')} · ${fare(prices[action])}`
-    : tr(defending() ? 'chooseBuilding' : 'chooseGroup');
-  el('commit').disabled = !action || cell === undefined || !canBuy(action);
-  el('ready').textContent = tr(locked ? 'readyConfirmed' : skipping ? 'skipWave' : 'ready');
-  el('ready').disabled = !editable;
+  paintPlanHint();
+  const ready = el('ready');
+  ready.parentElement.hidden = !joined || done || !!replay;
+  ready.textContent = tr(locked ? 'readyConfirmed' : skipping ? 'skipWave' : 'ready');
+  ready.disabled = !editable;
   // Both sides list what they committed this turn: orders on the attack, structures on the defence
   const built = defending()
     ? [...towers.map(({type, cell: id}) => ({type, id})), ...state.fences.map(({cell: id}) => ({type: 'fence', id}))]
@@ -444,7 +515,9 @@ function render(redraw = true) {
     li.append(`${tr(`action.${row.type}`)} · ${where} `);
     const undo = document.createElement('button');
     undo.type = 'button';
-    undo.textContent = tr('cancel');
+    const oldStructure = defending() && state.refundableCells && !state.refundableCells.includes(row.id);
+    undo.textContent = tr(oldStructure ? 'demolish' : 'cancel');
+    if (oldStructure) undo.title = tr('noRefund');
     undo.disabled = !editable;
     undo.onclick = () => {
       if (undo.disabled) return;
@@ -459,29 +532,36 @@ function render(redraw = true) {
 function play(previous) {
   if (replay || state.last <= seen || !state.frames.length) return;
   const snapshot = state;
-  const batch = generation;
-  const {frames} = snapshot;
   seen = snapshot.last;
-  const {replayMs, replayLeftMs} = snapshot;
-  if (!replayLeftMs) return;
+  if (!snapshot.replayLeftMs) return;
+  animateWave(snapshot, previous, render, () => {
+    play(snapshot);
+    if (!replay) {
+      render();
+      if (snapshot.done) sounds.play((snapshot.hp > 0) === defending() ? 'win' : 'loss');
+    }
+  });
+}
+
+function animateWave(snapshot, previous, start, finish) {
+  const {frames, replayMs, replayLeftMs} = snapshot;
   const end = performance.now() + replayLeftMs;
   const frameMs = replayMs / frames.length;
-  replay = {snapshot, gold: previous?.gold ?? snapshot.gold};
-  render();
-  let index = -1, oldHp = previous?.last === seen - 1 ? previous.hp : frames[0].hp;
+  const animation = replay = {snapshot, gold: previous?.gold ?? snapshot.gold};
+  start();
+  let index = -1, oldHp = snapshot.replayStart?.hp ??
+    (previous?.last === snapshot.last - 1 ? previous.hp : frames[0].hp);
   let damage = 0, hitUntil = 0;
-  const pulseCells = new Set(snapshot.towers.filter(t => t.type === 'pulse').map(t => t.cell));
+  const shotTypes = new Map((snapshot.replayStart?.buildings ??
+    (previous?.last === snapshot.last - 1 ? previous.towers : snapshot.towers))
+    .map(t => [t.cell, t.type]));
   function step() {
-    if (batch !== generation || replay?.snapshot !== snapshot) return;
+    if (replay !== animation) return;
     const timeLeft = end - performance.now();
     if (timeLeft <= 0) {
       replay = undefined;
       clearBattleActors();
-      play(snapshot);
-      if (!replay) {
-        render();
-        if (snapshot.done) sounds.play((snapshot.hp > 0) === defending() ? 'win' : 'loss');
-      }
+      finish();
       return;
     }
     const nextIndex = Math.min(frames.length - 1, Math.floor((replayMs - timeLeft) / frameMs));
@@ -491,14 +571,24 @@ function play(previous) {
       return;
     }
     // A missed frame has no visible start point for the next step.
-    const moveMs = index >= 0 && nextIndex === index + 1 ? untilNext * .84 : 0;
+    const adjacent = index >= 0 && nextIndex === index + 1;
+    const moveMs = adjacent ? untilNext * .84 : 0;
     index = nextIndex;
     const frame = frames[index];
     const before = frames[index - 1];
-    const previousBuildings = before?.buildings ?? (previous?.last === snapshot.last - 1 ? previous.towers : undefined);
+    const baseline = before ?? snapshot.replayStart ?? (previous?.last === snapshot.last - 1
+      ? {buildings: previous.towers, fences: previous.fences, hp: previous.hp} : undefined);
     if (frame.mobs.length > (before?.mobs.length ?? 0)) sounds.play('slime', .34);
-    if (frame.shots.some(s => pulseCells.has(s.cell))) sounds.play('rune', .23);
-    if (frame.shots.some(s => !pulseCells.has(s.cell))) sounds.play('bolt', .16);
+    if ((index === 0 || adjacent) && before && frame.mobs.some(mob => mob.kind === 'apc' &&
+      before.mobs.some(old => old.id === mob.id && (old.x !== mob.x || old.y !== mob.y)))) {
+      sounds.play('apcMove', .12);
+    }
+    const shotCues = new Set(frame.shots.map(s => {
+      const type = shotTypes.get(s.cell);
+      return type === 'pulse' ? 'rune' : type === 'mine' ? 'mine' : 'bolt';
+    }));
+    for (const cue of shotCues) sounds.play(cue, cue === 'rune' ? .23 : cue === 'bolt' ? .16 : 0);
+    if (frame.siege?.length) sounds.play('siege');
     if (before && frame.fences.length < before.fences.length) sounds.play('fence', .2);
     if (frame.hp < oldHp) {
       sounds.play('hit', .22);
@@ -507,10 +597,82 @@ function play(previous) {
     } else if (index >= hitUntil) damage = 0;
     oldHp = frame.hp;
     el('map').style.setProperty('--battle-frame', `${untilNext}ms`);
-    drawBattle(frame, damage, previousBuildings, moveMs);
+    drawBattle(frame, damage, baseline, moveMs, index === 0 || adjacent);
     setTimeout(step, untilNext);
   }
   step();
+}
+
+const replayApi = id => `/api/matches/${encodeURIComponent(id)}/replay`;
+
+function paintArchive() {
+  const {map, wave, missing} = archive;
+  el('leave').textContent = tr('backHome');
+  el('status').textContent = missing ? tr('replayUnavailable')
+    : map ? tr('archiveWave', {wave, total: map.waveCount}) : tr('loading');
+  el('replayTools').hidden = !map;
+  if (!map) return;
+  const waves = el('replayWave');
+  waves.replaceChildren(...Array.from({length: map.waveCount}, (_, i) =>
+    new Option(tr('archiveWave', {wave: i + 1, total: map.waveCount}), i + 1, false, wave === i + 1)));
+}
+
+async function archiveWave(wave, {reuse = false} = {}) {
+  const current = archive;
+  const request = ++current.request;
+  replay = undefined;
+  clearBattleActors();
+  if (!reuse) current.record = null;
+  current.wave = wave;
+  el('replayAgain').disabled = true;
+  paintArchive();
+  errorNote = null;
+  paintError();
+  try {
+    const record = current.record ?? await Tower.request(`${replayApi(current.id)}/${wave}`, {auth: false});
+    if (archive !== current || request !== current.request) return;
+    current.record = record;
+    state = {...current.map, towers: record.replayStart.buildings, fences: record.replayStart.fences,
+      hp: record.replayStart.hp, last: wave};
+    el('field').hidden = false;
+    el('replayAgain').disabled = false;
+    const snapshot = {...state, ...record, replayLeftMs: record.replayMs};
+    animateWave(snapshot, null, () => {}, () => {
+      drawBattle(record.frames.at(-1));
+      if (wave < current.map.waveCount) archiveWave(wave + 1);
+    });
+  } catch (error) {
+    if (archive !== current || request !== current.request) return;
+    el('replayAgain').disabled = false;
+    if (error.status === 404) errorNote = message('replayUnavailable'), paintError();
+    else fail(error);
+  }
+}
+
+async function openArchive(id) {
+  wipe();
+  void sounds.unlock();
+  const current = archive = {id, wave: 1, request: 0};
+  errorNote = null;
+  paintError();
+  el('game').hidden = false;
+  el('invite').hidden = true;
+  el('game-cap').hidden = true;
+  el('liveBudget').hidden = true;
+  paintArchive();
+  try {
+    const map = await Tower.request(replayApi(id), {auth: false});
+    if (archive !== current) return;
+    current.map = map;
+    state = map;
+    makeField();
+    await archiveWave(1);
+  } catch (error) {
+    if (archive !== current) return;
+    current.missing = true;
+    paintArchive();
+    if (error.status !== 404) fail(error);
+  }
 }
 
 function accept(next) {
@@ -546,13 +708,17 @@ function sync() {
   if (!roomId) return;
   refresh().catch(error => {
     // A seat can be taken away or a room can die; anything else is a passing hiccup
-    if ([401, 403, 404].includes(error.status)) leave(feedback(error));
+    if ([401, 403, 404].includes(error.status)) {
+      if (error.status === 404) Tower.forgetSeat(roomId);
+      leave(feedback(error));
+    }
     else fail(error);
   });
 }
 
 async function move(type, target) {
   if (sending || !state) return;
+  const batch = generation;
   const wave = state.last + 1;
   sending = true;
   ++sequence;
@@ -564,17 +730,17 @@ async function move(type, target) {
       method: 'POST',
       body: {wave, action: type, cell: target === undefined ? null : target},
     });
-    if (type !== 'ready' && type !== 'rematch') {
-      if (defending()) action = cell = undefined;
-      sounds.play('coin');
-    }
+    if (batch !== generation) return;
+    if (type !== 'ready' && type !== 'rematch') sounds.play('coin');
     accept(next);
   } catch (error) {
-    fail(error);
+    if (batch === generation) fail(error);
   } finally {
-    sending = false;
-    render();
-    sync();
+    if (batch === generation) {
+      sending = false;
+      render();
+      sync();
+    }
   }
 }
 
@@ -603,10 +769,12 @@ function buildActions() {
   for (const type of types().filter(type => type in state.prices)) {
     const button = document.createElement('button');
     button.dataset.action = type;
-    button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32">${sprite(type, 16, 16, 32)}</svg><strong></strong> <b></b><span><span class="action-hint"></span><small class="action-limit"></small></span>`;
+    button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32">${sprite(type, 16, 16, 32)}</svg><strong></strong> <b></b>` +
+      `<span><span class="action-hint"></span><small class="action-limit"><svg aria-hidden="true" viewBox="0 0 32 32">` +
+      `${sprite('groups-left', 16, 16, 32)}</svg><span class="action-limit-value"></span></small></span>`;
     button.onclick = () => {
       if (button.disabled) return;
-      if (defending() && onRoad(action) !== onRoad(type)) cell = undefined;
+      cell = undefined;
       action = type;
       render();
     };
@@ -626,7 +794,7 @@ function paintActions() {
 }
 
 function paintRoomControls() {
-  el('leave').textContent = tr(Tower.token ? 'backToDuels' : 'backHome');
+  el('leave').textContent = tr(state && !state.done ? 'leaveDuel' : Tower.token ? 'backToDuels' : 'backHome');
   el('copy').textContent = tr(copyNote);
 }
 
@@ -637,8 +805,11 @@ function paintInvite() {
 // The board wipes its own screen so a stale maze never shows over a new room
 function wipe() {
   clearBattleActors();
-  clearBattleActors();
-  state = field = action = cell = replay = undefined;
+  state = field = action = cell = replay = archive = undefined;
+  el('replayTools').hidden = true;
+  el('invite').hidden = true;
+  el('game-cap').hidden = false;
+  el('liveBudget').hidden = false;
   seen = 0;
   clock = null;
   clearTimeout(copyTimer);
@@ -653,6 +824,8 @@ function wipe() {
   el('rival').textContent = '';
   el('role').textContent = '';
   el('clock').hidden = true;
+  const ready = el('ready');
+  ready.parentElement.hidden = ready.disabled = true;
   el('field').hidden = true;
   el('planning').hidden = true;
   el('swap').hidden = true;
@@ -687,7 +860,7 @@ async function open(detail = {}) {
     return;
   }
   if (batch !== generation) return;
-  el('invite').open = !state.joined;
+  if (!state.joined) el('invite').open = true;
   Tower.watchRoom(id, seatToken).catch(() => {});
   if (!timer) timer = setInterval(tick, 2000);
   // The clock counts whole seconds, so it repaints between the polls, not twice a second
@@ -716,6 +889,7 @@ function leave(message) {
   ++sequence;
   if (timer) clearInterval(timer);
   timer = null;
+  Tower.unwatchRoom(roomId);
   roomId = null;
   seatToken = null;
   sending = false;
@@ -728,14 +902,58 @@ function leave(message) {
   window.dispatchEvent(new CustomEvent('tower:screen', { detail: {screen: 'lobby', message: message || null} }));
 }
 
-el('commit').onclick = () => { if (!el('commit').disabled) move(action, cell); };
 el('ready').onclick = () => { if (!el('ready').disabled) move('ready', null); };
 el('rematch').onclick = () => { if (!el('afterMatch').hidden) move('rematch', null); };
 el('swap').onclick = () => { if (!el('swap').hidden) swap('swap'); };
 el('swapYes').onclick = () => swap('swap/accept');
 el('swapNo').onclick = () => swap('swap/decline');
-el('leave').onclick = () => leave(null);
-el('again').addEventListener('click', () => leave(null));
+el('leave').onclick = async () => {
+  if (archive) { location.assign(location.pathname); return; }
+  if (!roomId || el('leave').disabled || (state?.done && sending)) return;
+  if (!state || state.done) { leave(null); return; }
+  if (!confirm(tr('closeDuel'))) return;
+  const id = roomId;
+  el('leave').disabled = true;
+  try {
+    await call(`/api/duels/${encodeURIComponent(id)}`, {method: 'DELETE'});
+    Tower.forgetSeat(id);
+    if (roomId === id) leave(null);
+  } catch (error) {
+    if (roomId !== id) return;
+    if (error.status === 404) { Tower.forgetSeat(id); leave(null); }
+    else fail(error);
+  } finally {
+    el('leave').disabled = false;
+  }
+};
+el('replayWave').onchange = event => archiveWave(Number(event.target.value));
+el('replayAgain').onclick = async () => {
+  const current = archive;
+  const request = current.request;
+  await sounds.unlock();
+  if (archive === current && request === current.request) archiveWave(current.wave, {reuse: true});
+};
+el('again').onclick = async () => {
+  if (!roomId || !state?.done || replay || sending) return;
+  if (Tower.token) { leave(null); return; }
+  const id = roomId, batch = generation;
+  sending = true;
+  el('again').disabled = el('rematch').disabled = true;
+  errorNote = null;
+  paintError();
+  try {
+    const next = await Tower.createGuestRoom(seatToken);
+    if (batch !== generation) return;
+    Tower.remember(next.id, next.seatToken);
+    Tower.unwatchRoom(id);
+    await open({roomId: next.id, seatToken: next.seatToken});
+  } catch (error) {
+    if (batch === generation) fail(error);
+  } finally {
+    el('again').disabled = el('rematch').disabled = false;
+    if (batch === generation) sending = false;
+  }
+};
 el('copy').onclick = async () => {
   const batch = generation;
   let result;
@@ -755,6 +973,11 @@ el('copy').onclick = async () => {
 };
 
 i18n.onChange(() => {
+  if (archive) {
+    paintArchive();
+    paintError();
+    return;
+  }
   if (!roomId) return;
   paintRoomControls();
   paintError();
@@ -768,6 +991,15 @@ i18n.onChange(() => {
 });
 
 Tower.on('Changed', () => { if (roomId && !sending) sync(); });
+Tower.on('InviteResolved', payload => {
+  if (payload?.roomClosed && roomId === payload.roomId) {
+    Tower.forgetSeat(roomId);
+    leave(message('inviteDeclined'));
+  }
+});
+Tower.on('RoomAbandoned', id => {
+  if (roomId === id) { Tower.forgetSeat(id); leave(message('idleDuel')); }
+});
 // Joining the room is not instant: whatever the opponent did meanwhile was broadcast
 // before we were in the group, so the board catches up right after the join
 Tower.on('RoomJoined', () => { if (roomId && !sending) sync(); });
@@ -775,4 +1007,5 @@ Tower.on('RoomJoined', () => { if (roomId && !sending) sync(); });
 window.addEventListener('tower:screen', event => {
   const detail = event.detail ?? {};
   if (detail.screen === 'game') open(detail);
+  else if (detail.screen === 'replay') openArchive(detail.id);
 });

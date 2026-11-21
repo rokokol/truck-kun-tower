@@ -7,8 +7,28 @@ const i18n = (() => {
     'theme.system': ['система', 'system'],
     'theme.light': ['светлая', 'light'],
     'theme.dark': ['тёмная', 'dark'],
+    guide: ['Справка', 'Guide'],
+    guideClose: ['Закрыть', 'Close'],
+    guideUnavailable: ['Не удалось загрузить характеристики. Закрой справку и попробуй ещё раз', 'Could not load stats. Close the guide and try again'],
+    guideUnits: ['Юниты', 'Units'],
+    guideStructures: ['Постройки', 'Structures'],
+    guideName: ['Название', 'Name'],
+    guideHp: ['HP', 'HP'],
+    guideDamage: ['Урон', 'Damage'],
+    guideRadius: ['Радиус, кл.', 'Range, tiles'],
+    guideInterval: ['Интервал, тики', 'Interval, ticks'],
+    guideNotes: ['HP указано на одного юнита, от 1-й до {total}-й волны. Интервал — число тиков между атаками или замедлениями; 0 означает, что периодической атаки нет. Радиус считается по оси, у больших зон углы скруглены', 'HP is per unit, from wave 1 to wave {total}. Interval is the ticks between attacks or slows. A 0 means no periodic attack. Range is along each axis. Large areas have cut corners'],
+    'guide.unitDamage': ['{keep} крепости / {fence} забору', '{keep} to keep / {fence} to fence'],
+    'guide.ranged': ['{structure} постройке / {keep} крепости', '{structure} to structures / {keep} to keep'],
+    'guide.apc': ['Ломает забор и высаживает пассажиров', 'Breaks a fence and drops off passengers'],
+    'guide.mine': ['Убивает при срабатывании', 'Kills on contact'],
+    'guide.frost': ['0, замедляет', '0, slows'],
+    'guide.pulse': ['{damage} всем в зоне', '{damage} to all in range'],
+    'action.balaclava': ['Пассажир БТР', 'Carrier passenger'],
+    'action.keep': ['Крепость', 'Keep'],
     sound: ['Звук', 'Sound'],
     soundUnavailable: ['Звук недоступен', 'Sound unavailable'],
+    soundEnable: ['Включить звук', 'Enable sound'],
     soundOn: ['Звук вкл', 'Sound on'],
     soundOff: ['Звук выкл', 'Sound off'],
 
@@ -41,12 +61,16 @@ const i18n = (() => {
     lobby: ['Лобби', 'Lobby'],
     profile: ['Профиль', 'Profile'],
     joinedSince: ['Аккаунт с', 'Member since'],
-    logout: ['Выйти', 'Sign out'],
+    logout: ['Выйти из аккаунта', 'Sign out'],
+    retrySession: ['Повторить проверку входа', 'Retry session check'],
     friends: ['Друзья', 'Friends'],
     addFriend: ['Добавить в друзья по нику', 'Add a friend by nickname'],
     add: ['Добавить', 'Add'],
     online: ['в сети', 'online'],
     offline: ['не в сети', 'offline'],
+    onlineCount: ['В сети: {count}', 'Online: {count}'],
+    onlineEmpty: ['В списке нет игроков. Обнови страницу, чтобы выбрать новый список', 'No players in this list. Reload the page for a new list'],
+    onlineAddFriend: ['Отправить заявку в друзья', 'Send friend request'],
     inviteFriend: ['Пригласить в дуэль', 'Invite to a duel'],
     remove: ['Удалить', 'Remove'],
     emptyFriends: ['Пока никого. Добавь друга по нику — и приглашай его в дуэль', 'No friends yet. Add a friend by nickname to invite them to a duel'],
@@ -60,6 +84,12 @@ const i18n = (() => {
     built: ['Постройки этого хода', 'Built this turn'],
     invitations: ['Приглашения в дуэль', 'Duel invitations'],
     invitedBy: ['{name} зовёт в дуэль', '{name} invites you to a duel'],
+    randomOpponent: ['Случайный противник', 'Random opponent'],
+    randomCreateHint: ['К этой комнате можно подключиться кнопкой случайной дуэли', 'Players can join this room from the random duel button'],
+    joinRandom: ['Подключиться к случайной дуэли', 'Join a random duel'],
+    idleDuel: ['Дуэль прервана: один из игроков отключился или не сделал ход', 'Duel ended: a player disconnected or did not act'],
+    stopRandom: ['Выйти из подбора', 'Cancel search'],
+    searchTime: ['Время ожидания: {elapsed}', 'Wait time: {elapsed}'],
     newDuel: ['Новая дуэль', 'New duel'],
     createDuel: ['Создать дуэль', 'Create a duel'],
     createHint: ['После создания пришли другу ссылку-приглашение или нажми «Пригласить в дуэль» рядом с его ником', 'Send the invite link to a friend, or choose “Invite to a duel” next to their nickname'],
@@ -67,12 +97,14 @@ const i18n = (() => {
     emptySeat: ['свободное место', 'open seat'],
     continue: ['Продолжить', 'Continue'],
     link: ['Ссылка', 'Link'],
-    tabNote: ['Одна вкладка — одно место в комнате. Ссылка-приглашение работает и для гостя', 'Each tab holds one seat. Guests can use the invite link'],
+    tabNote: ['Аккаунт общий для вкладок, а гостевое место остаётся в своей вкладке', 'Tabs share the account. A guest seat stays in its tab'],
     'duel.waiting': ['ждём соперника', 'waiting for opponent'],
     'duel.playing': ['в игре', 'in progress'],
     'duel.finished': ['завершена', 'finished'],
     'duel.cancelled': ['отменена', 'cancelled'],
     'duel.abandoned': ['брошена', 'abandoned'],
+    'duel.interrupted': ['прервана', 'interrupted'],
+    interruptedDuel: ['Сервер перезапустился, и доска не сохранилась. Начни новую дуэль', 'The server restarted, so the board was not kept. Start a new duel'],
     requestSent: ['Заявка отправлена: {name}', 'Friend request sent to {name}'],
     removeFriend: ['Удалить {name} из друзей?', 'Remove {name} from your friends?'],
     inviteFailed: ['Дуэль создана, но приглашение не ушло: {error}', 'The duel is ready, but the invite failed: {error}'],
@@ -81,10 +113,14 @@ const i18n = (() => {
     requestFrom: ['Заявка в друзья от {name}', 'Friend request from {name}'],
     player: ['игрока', 'a player'],
     opponentName: ['Соперник', 'An opponent'],
+    inviteDeclined: ['Соперник отказался от дуэли', 'Your opponent declined the duel'],
     inviteAccepted: ['Приглашение приняли — соперник уже в комнате', 'Invite accepted. Your opponent is in the room'],
     missingRoom: ['Ссылка без комнаты', 'The link has no room ID'],
-    joinFailed: ['Не удалось войти в комнату', 'Could not join the room'],
 
+    leaveDuel: ['Выйти из дуэли', 'Leave duel'],
+    demolish: ['Снести', 'Demolish'],
+    noRefund: ['За снос старой постройки золото не возвращается', 'Old structures give no refund'],
+    duelBusy: ['Сначала выйди из текущей дуэли', 'Leave your current duel first'],
     backToDuels: ['К списку дуэлей', 'Back to duels'],
     backHome: ['На главную', 'Back to home'],
     inviteOpponent: ['Пригласить соперника', 'Invite an opponent'],
@@ -110,6 +146,17 @@ const i18n = (() => {
     again: ['Новая дуэль', 'New duel'],
     loading: ['Загружаем поле', 'Loading the board'],
     missingBoard: ['Сервер не прислал поле дуэли', 'The server did not send a board'],
+    replayLink: ['Повтор', 'Replay'],
+    previousPage: ['Назад', 'Previous'],
+    nextPage: ['Вперёд', 'Next'],
+    pageNumber: ['Страница {page}', 'Page {page}'],
+    matchHistory: ['Журнал матчей', 'Match history'],
+    guestLabel: ['Гость', 'Guest'],
+    watchReplay: ['Смотреть реплей матча', 'Watch match replay'],
+    archiveWave: ['Реплей: волна {wave} из {total}', 'Replay: wave {wave} of {total}'],
+    chooseReplayWave: ['Выбрать волну', 'Choose a wave'],
+    replayAgain: ['Сначала эту волну', 'Restart this wave'],
+    replayUnavailable: ['Запись матча недоступна', 'Match replay is not available'],
     battle: ['Волна {wave} из {total} · бой', 'Wave {wave} of {total} · battle'],
     planning: ['Волна {wave} из {total} · подготовка', 'Wave {wave} of {total} · planning'],
     result: ['{outcome} · {keep}', '{outcome} · {keep}'],
@@ -127,15 +174,12 @@ const i18n = (() => {
     gate: ['Вход {index}', 'Gate {index}'],
     wallCell: ['Стена: столбец {x}, ряд {y}', 'Wall: column {x}, row {y}'],
     roadCell: ['Тропа: столбец {x}, ряд {y}', 'Path: column {x}, row {y}'],
-    chooseRoad: ['Выбери отмеченную клетку на тропе', 'Choose a marked cell on the path'],
-    chooseWall: ['Выбери стену у тропы или перейди на забор и ловушки', 'Choose a wall by the path, or switch to fences or traps'],
-    chooseGate: ['Выбери вход, чтобы увидеть маршруты', 'Choose a gate to preview the routes'],
-    selectedCell: ['Выбрана клетка: {x}, {y}', 'Selected cell: {x}, {y}'],
+    chooseRoad: ['Нажми на отмеченную клетку, чтобы поставить забор или ловушку', 'Click a marked path cell to place a fence or trap'],
+    chooseWall: ['Нажми на клетку у тропы, чтобы построить башню', 'Click a cell by the path to build a tower'],
+    chooseGate: ['Нажми на вход, чтобы добавить туда группу', 'Click a gate to deploy the group there'],
     selectedGate: ['{gate} · {route}', '{gate} · {route}'],
     shortestRoute: ['кратчайший путь', 'shortest route'],
-    randomRoute: ['выбор ветки 50/50', 'equal chance at each fork'],
-    build: ['Построить', 'Build'],
-    addGroup: ['Добавить в волну', 'Add to the wave'],
+    randomRoute: ['случайный маршрут', 'random route'],
     chooseBuilding: ['Выбери постройку', 'Choose a structure'],
     chooseGroup: ['Выбери группу', 'Choose a group'],
     'action.bolt': ['Арбалет', 'Crossbow'],
@@ -155,7 +199,7 @@ const i18n = (() => {
     'action.ranged': ['Дальнобойные', 'Ranged slimes'],
     'hint.ranged': ['Два слизня. Останавливаются и стреляют в зоне 5×5, до 10 выстрелов каждый', 'Two slimes stop and fire within a 5×5 area. Each fires up to 10 shots'],
     'action.apc': ['Бронетранспортёр', 'Armored carrier'],
-    'hint.apc': ['Высадит троих по очереди после 70% пути или при встрече с забором', 'Drops off three slimes in sequence after 70% of the route, or when it reaches a fence'],
+    'hint.apc': ['Высадит пятерых по очереди после 70% пути или при встрече с забором', 'Drops off five slimes in sequence after 70% of the route, or when it reaches a fence'],
     'action.fence': ['Забор', 'Fence'],
     'hint.fence': ['Слизни остановятся, чтобы его сломать', 'Slimes stop to break it'],
     'action.cannon': ['Пушка', 'Cannon'],
@@ -185,8 +229,18 @@ const i18n = (() => {
 
   const locales = { ru: 'ru-RU', en: 'en-US' };
   const key = 'truck-kun-tower:lang';
-  let lang = 'ru';
-  try { if (localStorage.getItem(key) === 'en') lang = 'en'; } catch {}
+  function initialLanguage() {
+    try {
+      const saved = localStorage.getItem(key);
+      if (Object.hasOwn(locales, saved)) return saved;
+    } catch {}
+    for (const tag of [...(navigator.languages ?? []), navigator.language ?? '']) {
+      const primary = tag.toLowerCase().split('-')[0];
+      if (Object.hasOwn(locales, primary)) return primary;
+    }
+    return 'en';
+  }
+  let lang = initialLanguage();
   const message = (key, params) => ({ key, params });
   const text = (value, language = lang) => typeof value === 'object' && value !== null
     ? t(value.key, value.params, language) : String(value ?? '');
@@ -208,9 +262,10 @@ const i18n = (() => {
   }
   for (const button of buttons) button.addEventListener('click', () => {
     const next = button.dataset.language;
-    if (next === lang || !Object.hasOwn(locales, next)) return;
+    if (!Object.hasOwn(locales, next)) return;
+    try { localStorage.setItem(key, next); } catch {}
+    if (next === lang) return;
     lang = next;
-    try { localStorage.setItem(key, lang); } catch {}
     paint();
     window.dispatchEvent(new Event('tower:language'));
   });
@@ -218,6 +273,7 @@ const i18n = (() => {
 
   return { t, text, message, feedback, onChange, locales, get lang() { return lang; },
     http(status, detail, code) {
+      if (status === 409 && code === 'duel_busy') return message('duelBusy');
       if (status === 409 && code === 'purchase_limit') return message('purchaseLimit');
       const name = `http.${status}`;
       const summary = Object.hasOwn(strings, name) ? message(name) : message('requestFailed', { status });

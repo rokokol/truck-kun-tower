@@ -128,7 +128,8 @@ button:focus-visible { outline: 2px solid var(--ddlc-accent); outline-offset: 2p
   button:hover:enabled { outline: 2px solid var(--ddlc-accent); outline-offset: 2px; }
   button:hover:enabled { border-color: var(--ddlc-accent); }
 }
-button:disabled { opacity: .55; cursor: default; }
+button:disabled,
+[inert] :is(button, input, a[href]) { opacity: .55; cursor: default; }
 #start, #ready:enabled {
   background: var(--ddlc-text);
   color: var(--ddlc-ground);

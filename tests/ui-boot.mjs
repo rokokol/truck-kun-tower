@@ -87,6 +87,71 @@ try {
   }
   console.log('PASS: language follows browser preferences until a manual choice');
 
+  const seeker = await browser.newPage({locale: 'en-GB'});
+  await seeker.addInitScript(() => {
+    localStorage.setItem('tower:token', 'fixture-token');
+    window.playedCues = [];
+  });
+  const socket = Promise.withResolvers();
+  await seeker.routeWebSocket(/\/bell\?/, ws => {
+    ws.onMessage(data => {
+      if (!String(data).includes('"protocol":"json"')) return;
+      ws.send('{}\x1e');
+      socket.resolve(ws);
+    });
+  });
+  const requestedSearch = Promise.withResolvers();
+  const finishSearch = Promise.withResolvers();
+  await seeker.route('http://boot.test/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/auth/me') return route.fulfill({json: {nickname: 'Seeker'}});
+    if (path === '/api/friends') return route.fulfill({json: [{id: 'friend', nickname: 'Friend'}]});
+    if (path === '/api/duels/random/join') {
+      requestedSearch.resolve();
+      await finishSearch.promise;
+      return route.fulfill({status: 204});
+    }
+    if (path.startsWith('/api/')) return route.fulfill({json: []});
+    if (path === '/bell/negotiate') return route.fulfill({json: {
+      connectionId: 'fixture', availableTransports: [{transport: 'WebSockets', transferFormats: ['Text']}],
+    }});
+    if (path === '/sounds.js') {
+      const body = await readFile(root + 'sounds.js', 'utf8');
+      return route.fulfill({contentType: 'text/javascript', body: body +
+        '; const playCue = sounds.play; sounds.play = (name, ...args) => { playedCues.push(name); playCue(name, ...args); };'});
+    }
+    return serve(route);
+  });
+  await seeker.goto('http://boot.test/');
+  const removeFriend = seeker.locator(`button[x-text="t('remove')"]`);
+  await removeFriend.waitFor({timeout: 5000});
+  const normalOpacity = await removeFriend.evaluate(el => Number(getComputedStyle(el).opacity));
+  const searchButton = seeker.locator('#random-join');
+  await searchButton.click({timeout: 3000});
+  await seeker.getByRole('button', {name: 'Cancel search'}).waitFor({timeout: 3000});
+  await requestedSearch.promise;
+  assert.equal(await searchButton.isEnabled(), true, 'Search can be stopped');
+  assert.equal(await removeFriend.evaluate((el, normal) => {
+    el.focus();
+    return document.activeElement !== el && Number(getComputedStyle(el).opacity) < normal;
+  }, normalOpacity), true, 'The friend action must be blocked and look disabled');
+  await searchButton.click({timeout: 3000});
+  assert.equal(await searchButton.isDisabled(), true, 'Keep controls locked until the pending request ends');
+  finishSearch.resolve();
+  await seeker.getByRole('button', {name: 'Join a random duel'}).waitFor({timeout: 3000});
+  assert.equal(await removeFriend.evaluate(el => Number(getComputedStyle(el).opacity)), normalOpacity);
+  console.log('PASS: search blocks and dims other controls until the final response');
+
+  const bell = await socket.promise;
+  const invite = {id: 'incoming', roomId: 'friend-duel', from: {nickname: 'Challenger'}};
+  const frame = (target, payload) => JSON.stringify({type: 1, target, arguments: [payload]}) + '\x1e';
+  const incoming = frame('DuelInvite', {invite});
+  bell.send(incoming + incoming);
+  await seeker.getByRole('button', {name: 'Accept', exact: true}).waitFor({timeout: 3000});
+  assert.deepEqual(await seeker.evaluate(() => playedCues), ['duelInvite']);
+  await seeker.close();
+  console.log('PASS: a live invite plays one cue even if the event arrives twice');
+
   const viewer = await browser.newPage({locale: 'en-GB'});
   await viewer.addInitScript(() => {
     const create = AudioContext.prototype.createOscillator;

@@ -681,6 +681,7 @@
         const row = payload?.invite;
         if (!row?.id || this.invites.some(item => item.id === row.id)) return;
         this.invites = [row, ...this.invites];
+        sounds.play('duelInvite');
         this.note = message('invitedBy', { name: row.from?.nickname ?? message('opponentName') });
       },
 

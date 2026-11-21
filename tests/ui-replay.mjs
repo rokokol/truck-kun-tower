@@ -61,6 +61,8 @@ try {
       const ratio = bar.querySelector('.battle-hp-fill').width.baseVal.value / bar.querySelector('.battle-hp-track').width.baseVal.value;
       return Math.abs(ratio - expected) < 1e-6;
     };
+    accept({...base, joined: false});
+    check(!cues.includes('matchStart'), 'A waiting room must stay silent');
     accept(base);
     check(hasRatio(el('map-fences'), 1), 'Full fence must have a full bar');
     accept({...base, fences: [{cell: fence.cell, hp: 4}]});
@@ -72,6 +74,7 @@ try {
     accept(base);
     check(onRoad('mine') && onRoad('spikes') && !onRoad('bolt'), 'Mine preview must use road cells');
     accept(wave);
+    check(cues.filter(name => name === 'matchStart').length === 1, 'The match cue must play once, not on each update or wave');
     window.retainedTower = document.querySelector('#map-towers .tower');
     window.retainedAngle = retainedTower.dataset.angle;
     check(retainedAngle !== '0', 'Initial aim did not turn the tower');

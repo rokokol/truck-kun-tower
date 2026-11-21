@@ -692,6 +692,7 @@ function accept(next) {
     makeField();
     buildActions();
   }
+  if (next.joined && !next.done && next.last === 0 && (!previous?.joined || rematched)) sounds.play('matchStart');
   clock = {left: next.secondsLeft, at: performance.now()};
   if (next.last !== previous?.last || next.locked) action = cell = undefined;
   play(previous);

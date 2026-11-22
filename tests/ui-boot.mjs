@@ -189,15 +189,20 @@ try {
     assert.ok(await viewer.evaluate(() => window.audibleCues > 0), 'Allowed audio starts with the replay');
   } else {
     assert.equal(await viewer.evaluate(() => window.audibleCues), 0);
-    assert.equal(await sound.getAttribute('aria-pressed'), 'false');
-    await viewer.getByRole('button', {name: 'Enable sound', exact: true}).click({timeout: 2000});
-    await viewer.waitForFunction(() => document.querySelector('#sound').getAttribute('aria-pressed') === 'true');
+    assert.equal(await sound.getAttribute('aria-pressed'), 'true', 'Autoplay policy does not mute the preference');
+    await viewer.locator('#hp').click();
   }
   await viewer.waitForFunction(() => !replay, undefined, {timeout: 5000});
   const unlockCues = await viewer.evaluate(() => window.audibleCues);
   await viewer.getByRole('button', {name: 'Restart this wave'}).click();
   await viewer.waitForFunction(count => window.audibleCues > count, unlockCues);
   await viewer.getByLabel('Choose a wave').selectOption('1');
+  await sound.click();
+  await viewer.reload();
+  assert.equal(await sound.getAttribute('aria-pressed'), 'false', 'Mute survives reload');
+  await sound.click();
+  await viewer.reload();
+  assert.equal(await sound.getAttribute('aria-pressed'), 'true', 'Unmute survives reload');
   await viewer.locator('#hp').getByText('9', {exact: true}).waitFor({timeout: 5000});
   await viewer.goto('http://boot.test/?replay=missing');
   await viewer.getByRole('heading', {name: 'Match replay is not available'}).waitFor({timeout: 5000});

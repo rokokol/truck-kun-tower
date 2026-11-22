@@ -109,7 +109,7 @@
           <button type="submit" class="wide" :disabled="busy"
                   x-text="t(busy ? 'busy' : mode === 'login' ? 'signIn' : 'signUp')"></button>
         </form>
-        <p id="authError" class="error-slip form-error" role="alert" x-show="error">
+        <p id="authError" class="error-slip form-error" role="alert" data-error-slot="error" x-show="error">
           <span class="error-slip-heading" x-text="t('errorHeading')"></span>
           <span x-text="text(error)"></span>
         </p>
@@ -143,8 +143,8 @@
           <button type="button" @click="logout()" :disabled="busy" x-text="t('logout')"></button>
         </div>
 
-        <p class="notice" role="status" x-show="note" x-text="text(note)"></p>
-        <p class="error-slip form-error" role="alert" x-show="lobbyError">
+        <p class="notice" role="status" data-error-slot="note" x-show="note" x-text="text(note)"></p>
+        <p class="error-slip form-error" role="alert" data-error-slot="lobbyError" x-show="lobbyError">
           <span class="error-slip-heading" x-text="t('errorHeading')"></span>
           <span x-text="text(lobbyError)"></span>
         </p>
@@ -250,7 +250,7 @@
             <template x-for="duel in duels" :key="duel.id">
               <li class="duel">
                 <span class="duel-line">
-                  <b x-text="duel.opponent ? duel.opponent.nickname : t('emptySeat')"></b>
+                  <b x-text="duel.opponent?.nickname || t(duel.startedAt ? 'guestLabel' : 'emptySeat')"></b>
                   <small class="tag" x-text="statusOf(duel.status)"></small>
                   <small class="tag" x-text="sideOf(duel.mySide)"></small>
                 </span>
@@ -262,7 +262,7 @@
                     <span class="row-actions">
                       <button type="button" @click="continueDuel(duel)" x-text="t('continue')"></button>
                       <button type="button" class="ghost" @click="copyLink(duel.id)" x-text="t('link')"></button>
-                      <button type="button" class="ghost" @click="cancelDuel(duel)" x-text="t('cancel')"></button>
+                      <button type="button" class="ghost" @click="cancelDuel(duel)" x-text="t('leaveDuel')"></button>
                     </span>
                   </template>
                   <a class="replay-link" x-show="!canContinue(duel) && duel.replayId" :href="duel.replayId ? replayHref(duel.replayId) : null"
@@ -305,7 +305,6 @@
                     x-text="t('nextPage')"></button>
           </nav>
         </section>
-        <p class="fine foot" x-text="t('tabNote')"></p>
         </div>
       </section>
     </div>
@@ -338,9 +337,16 @@
         </div>
         <div class="board-frame">
           <div class="board-scroll">
-            <div id="board">
-              <svg id="map" aria-hidden="true"></svg>
-              <div id="cells" role="group" data-i18n-aria-label="boardCells"></div>
+            <div id="board-layout">
+              <div id="board">
+                <svg id="map" aria-hidden="true"></svg>
+                <div id="cells" role="group" data-i18n-aria-label="boardCells"></div>
+              </div>
+              <div id="board-rows" class="board-axis"></div>
+              <div id="board-columns" class="board-axis"></div>
+              <div id="board-corner" aria-hidden="true">
+                <svg viewBox="0 18 48 24"><use href="actors.svg#truck" width="48" height="44"/></svg>
+              </div>
             </div>
           </div>
         </div>

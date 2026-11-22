@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
 
-// An invite points at a live board, not at a seat: accepting only settles the invitation,
-// and /api/duels/{id}/join is what actually takes the chair. So a dead room is not a join failure here.
-public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bell> hub, Presence presence) {
+public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bell> hub, Presence presence, RoomService roomService) {
 
     public async Task<List<InviteDto>> InboxAsync(Guid me) {
         var rows = await unit.Invites.IncomingAsync(me);
@@ -31,6 +29,20 @@ public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bel
         if (friendship?.Status != FriendshipStatus.Accepted && !presence.IsOnline(to)) {
             throw AppError.Forbidden("Можно позвать друга или игрока, который сейчас в сети");
         }
+        var first = (await unit.Invites.IncomingAsync(me))
+            .Where(invite => invite.FromId == to && invite.RoomId != room)
+            .OrderBy(invite => invite.CreatedAt).ThenBy(invite => invite.Id)
+            .FirstOrDefault(invite => HostsWaitingRoom(invite.RoomId, to));
+        if (first is not null && presence.IsOnline(to)) {
+            var player = new PlayerRef(me, null);
+            first.Status = InviteStatus.Accepted;
+            first.ResolvedAt = DateTime.UtcNow;
+            await roomService.CancelCoreAsync(player, room);
+            var session = await roomService.JoinCoreAsync(player, first.RoomId, null, default);
+            await Resolved(first, InviteStatus.Accepted, to);
+            return new InviteDto(first.Id, new UserBrief(to, friend.Nickname), first.RoomId, first.CreatedAt, session);
+        }
+
         if (await unit.Invites.PendingExistsAsync(me, to, room)) throw AppError.Conflict("Приглашение уже отправлено");
 
         var invite = new DuelInvite {
@@ -48,6 +60,11 @@ public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bel
         var dto = new InviteDto(invite.Id, new UserBrief(me, mine?.Nickname ?? ""), room, invite.CreatedAt);
         await Send(to, "DuelInvite", new { invite = dto });
         return dto;
+    }
+
+    bool HostsWaitingRoom(string id, Guid userId) {
+        if (rooms.Get(id) is not { } game) return false;
+        lock (game) return !game.Done && !game.Joined && game.SeatOf(new PlayerRef(userId, null)) >= 0;
     }
 
     public Task<InviteAccepted> AcceptAsync(Guid me, Guid id) => WithMembership(() => AcceptCoreAsync(me, id));
@@ -118,7 +135,7 @@ public sealed class InviteService(IUnitOfWork unit, Rooms rooms, IHubContext<Bel
     internal static async Task<List<DuelInvite>> CancelPendingAsync(IUnitOfWork unit, string roomId, Guid[] players,
         CancellationToken token, Guid? except = null) {
         var pending = await unit.Invites.PendingForAsync(roomId, players, token);
-        var closed = pending.Where(invite => invite.Id != except).ToList();
+        var closed = pending.Where(invite => invite.Id != except && invite.Status == InviteStatus.Pending).ToList();
         var now = DateTime.UtcNow;
         foreach (var invite in closed) {
             invite.Status = InviteStatus.Cancelled;

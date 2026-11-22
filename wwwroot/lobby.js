@@ -199,8 +199,36 @@
 
   let live = null, search = null;
 
+  function expireError(node, clear, current = () => true) {
+    let fade;
+    const timer = setTimeout(() => {
+      if (!current()) return;
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches || !node?.getClientRects().length) {
+        clear();
+        return;
+      }
+      fade = node.animate([{opacity: 1}, {opacity: 0}], {duration: 300, easing: 'ease-out', fill: 'forwards'});
+      fade.onfinish = () => {
+        if (current()) clear();
+        fade.cancel();
+      };
+    }, 5000);
+    return () => {
+      clearTimeout(timer);
+      fade?.cancel();
+    };
+  }
+
   function component() {
+    const cancelExpiry = {};
     return {
+      showError(slot, note) {
+        cancelExpiry[slot]?.();
+        this[slot] = note;
+        const displayed = this[slot];
+        cancelExpiry[slot] = expireError(document.querySelector(`[data-error-slot="${slot}"]`),
+          () => { this[slot] = ''; }, () => this[slot] === displayed);
+      },
       screen: null,
       pendingRoom: '',
       sessionCheckFailed: false,
@@ -265,7 +293,7 @@
         try {
           await boot();
         } catch (error) {
-          this.error = feedback(error);
+          this.showError('error', feedback(error));
           this.screen = 'auth';
         }
       },
@@ -275,9 +303,9 @@
         if (this.busy) return;
         const nickname = this.nickname.trim();
         this.note = '';
-        if (nickname.length < 3) { this.error = message('shortName'); return; }
-        if (this.password.length < 8) { this.error = message('shortPassword'); return; }
-        if (this.password.length > 72) { this.error = message('longPassword'); return; }
+        if (nickname.length < 3) { this.showError('error', message('shortName')); return; }
+        if (this.password.length < 8) { this.showError('error', message('shortPassword')); return; }
+        if (this.password.length > 72) { this.showError('error', message('longPassword')); return; }
         this.busy = true;
         this.error = '';
         try {
@@ -289,7 +317,7 @@
           this.password = '';
           await this.enterLobby();
         } catch (error) {
-          this.error = feedback(error);
+          this.showError('error', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -324,7 +352,7 @@
           const answer = await createGuestRoom(seat);
           this.openBoard(answer.id, answer.seatToken ?? null);
         } catch (error) {
-          this.error = feedback(error);
+          this.showError('error', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -389,7 +417,7 @@
         } catch (error) {
           if (token !== identity) return;
           if (error.status === 401) this.expire(feedback(error));
-          else this.lobbyError = feedback(error);
+          else this.showError('lobbyError', feedback(error));
         }
       },
 
@@ -423,7 +451,7 @@
         } catch (error) {
           if (!current()) return;
           if (error.status === 401) this.expire(feedback(error));
-          else this.lobbyError = feedback(error);
+          else this.showError('lobbyError', feedback(error));
         } finally {
           page.loading = false;
         }
@@ -480,7 +508,7 @@
           this.note = message('requestSent', { name: nickname });
           await this.refreshLobby();
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -495,7 +523,7 @@
           await request(path, { method: accept ? 'POST' : 'DELETE' });
           await this.refreshLobby();
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -509,7 +537,7 @@
           await request(`/api/friends/${encodeURIComponent(friend.id)}`, { method: 'DELETE' });
           this.friends = this.friends.filter(row => row.id !== friend.id);
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -524,7 +552,7 @@
           this.invites = this.invites.filter(row => row.id !== invite.id);
           await this.joinRoom(answer?.roomId ?? invite.roomId, 'lobbyError');
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -536,7 +564,7 @@
           await request(`/api/invites/${encodeURIComponent(invite.id)}`, { method: 'DELETE' });
           this.invites = this.invites.filter(row => row.id !== invite.id);
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         }
       },
 
@@ -570,7 +598,7 @@
             }
           } catch (error) {
             if (search !== job) return;
-            if (this.searching) this.lobbyError = feedback(error);
+            if (this.searching) this.showError('lobbyError', feedback(error));
             this.endSearch(job);
             return;
           } finally {
@@ -597,20 +625,29 @@
         this.busy = true;
         this.lobbyError = '';
         this.note = '';
+        const identity = token;
         try {
           const answer = await request('/api/duels', { method: 'POST',
             body: { side: this.side, ...(!friendId && this.randomOpponent ? {randomOpponent: true} : {}) } });
+          if (token !== identity) return;
           remember(answer.id, answer.seatToken);
           if (friendId) {
             try {
-              await request('/api/invites', { method: 'POST', body: { friendId, roomId: answer.id } });
+              const invite = await request('/api/invites', { method: 'POST', body: { friendId, roomId: answer.id } });
+              if (token !== identity) return;
+              if (invite.session) {
+                forgetSeat(answer.id);
+                this.openBoard(invite.session.id, invite.session.seatToken);
+                return;
+              }
             } catch (error) {
-              this.note = message('inviteFailed', { error: feedback(error) });
+              if (token !== identity) return;
+              this.showError('note', message('inviteFailed', { error: feedback(error) }));
             }
           }
           this.openBoard(answer.id, answer.seatToken ?? null);
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -623,7 +660,7 @@
       async continueDuel(duel) {
         const status = String(duel.status).toLowerCase();
         if (['finished', 'cancelled', 'abandoned', 'interrupted'].includes(status)) {
-          this.lobbyError = message('duelClosed');
+          this.showError('lobbyError', message('duelClosed'));
           return;
         }
         this.openBoard(duel.id, seatOf(duel.id));
@@ -638,7 +675,7 @@
           forgetSeat(duel.id);
           await this.refreshDuels();
         } catch (error) {
-          this.lobbyError = feedback(error);
+          this.showError('lobbyError', feedback(error));
         } finally {
           this.busy = false;
         }
@@ -711,7 +748,7 @@
         if (search) this.endSearch(search);
         forgetExpiredToken();
         this.user = null;
-        this.error = reason || message('expired');
+        this.showError('error', reason || message('expired'));
         this.lobbyError = '';
         this.screen = 'auth';
         this.mode = 'login';
@@ -723,7 +760,7 @@
       async joinRoom(roomId, errorSlot) {
         const slot = errorSlot === 'error' ? 'error' : 'lobbyError';
         const id = String(roomId ?? '').trim();
-        if (!id) { this[slot] = message('missingRoom'); return; }
+        if (!id) { this.showError(slot, message('missingRoom')); return; }
         // A chair answers to the seat token or to the account, so an old seat opens without joining
         if (await this.canOpen(id)) {
           this.openBoard(id, seatOf(id));
@@ -736,7 +773,7 @@
           remember(id, answer?.seatToken);
           this.openBoard(id, answer?.seatToken ?? null);
         } catch (error) {
-          this[slot] = feedback(error);
+          this.showError(slot, feedback(error));
         }
       },
 
@@ -782,7 +819,7 @@
         if (error.status === 401 || error.status === 403) forgetExpiredToken();
         else {
           live.sessionCheckFailed = true;
-          live.error = feedback(error);
+          live.showError('error', feedback(error));
           live.screen = 'auth';
           return;
         }
@@ -811,14 +848,14 @@
     if (live.user) {
       live.screen = 'lobby';
       if (detail.message?.key === 'inviteDeclined') { live.note = detail.message; live.lobbyError = ''; }
-      else if (detail.message) live.lobbyError = detail.message;
+      else if (detail.message) live.showError('lobbyError', detail.message);
       live.refreshLobby();
       live.refreshDuels();
       live.refreshOnline();
       live.refreshMatches();
     } else {
       live.screen = 'auth';
-      if (detail.message) live.error = detail.message;
+      if (detail.message) live.showError('error', detail.message);
     }
   });
 
@@ -828,6 +865,7 @@
 
   // Shared with game.js: one wire, one socket, one idea of where a seat is kept
   globalThis.Tower = {
+    expireError,
     request,
     on,
     connect,

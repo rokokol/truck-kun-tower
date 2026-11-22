@@ -17,7 +17,7 @@ public record OutgoingRequestDto(Guid Id, UserBrief To, DateTime CreatedAt);
 public record RequestListDto(List<IncomingRequestDto> Incoming, List<OutgoingRequestDto> Outgoing);
 public record FriendRequestCreate(string? Nickname);
 
-public record InviteDto(Guid Id, UserBrief From, string RoomId, DateTime CreatedAt);
+public record InviteDto(Guid Id, UserBrief From, string RoomId, DateTime CreatedAt, DuelSession? Session = null);
 public record InviteCreate(Guid? FriendId, string? RoomId);
 public record InviteAccepted(string RoomId);
 

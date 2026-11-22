@@ -114,7 +114,8 @@ header .language [aria-pressed='true']:focus-visible { box-shadow: inset 0 0 0 1
 @media (max-width: 480px) {
   #guide { padding: 10px; }
   .guide-table { font-size: .75rem; }
-  .guide-table tbody { overflow-wrap: anywhere; }
+  .guide-table { overflow-wrap: anywhere; }
+  .guide-table :is(th, td) { padding-inline: 3px; }
   .guide-entry { gap: 4px; }
   .ddlc-snap.guide-portrait { width: 25px; height: 26px; padding: 1px 2px 3px; }
   .guide-sprite { width: 20px; height: 20px; }
@@ -228,7 +229,6 @@ h1 em { display: block; font: 650 clamp(15px, 3.4vw, 18px)/1.35 var(--ddlc-font-
 button.ghost { background: transparent; border-color: var(--ddlc-line); color: var(--ddlc-muted); font-weight: 700; }
 .notice { margin: 0 0 14px; padding: 8px 12px; border: 1px dashed var(--ddlc-line-live); background: var(--ddlc-code-ground); font-size: 14px; user-select: all; }
 .fine { margin: 10px 0 0; font-size: 13px; line-height: 1.45; color: var(--ddlc-muted); }
-.foot { margin-top: 22px; }
 .or {
   display: flex;
   align-items: center;
@@ -364,9 +364,28 @@ summary { cursor: pointer; font-weight: 700; }
   transform: rotate(-6deg);
   pointer-events: none;
 }
+#board-layout {
+  --axis-size: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--axis-size);
+  grid-template-rows: auto var(--axis-size);
+  min-width: calc(24px * var(--cols) + var(--axis-size));
+}
+.board-axis { display: grid; background: var(--ddlc-code-ground); }
+#board-corner { display: grid; place-items: center; background: var(--ddlc-code-ground); }
+#board-corner svg { width: 20px; height: 12px; }
+#board-rows { grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); }
+#board-columns { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
+.board-axis button {
+  min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent;
+  color: var(--ddlc-text); font: 700 11px/1 var(--ddlc-font-data);
+}
+.board-axis button:hover, .board-axis button:focus-visible {
+  background: var(--ddlc-accent); color: var(--ddlc-ground); outline-offset: -2px;
+}
+#map-axis { fill: var(--ddlc-accent); opacity: .28; }
 #board {
   position: relative;
-  min-width: calc(24px * var(--cols));
   background-color: var(--ddlc-board-shade);
   background-image: linear-gradient(to right, var(--ddlc-grid) 1px, transparent 1px), linear-gradient(to bottom, var(--ddlc-grid) 1px, transparent 1px);
   background-size: calc(100% / var(--cols)) calc(100% / var(--rows));
@@ -387,6 +406,7 @@ summary { cursor: pointer; font-weight: 700; }
 .road-line, .route-preview { stroke-linecap: round; stroke-linejoin: round; fill: none; }
 .road-line { stroke: var(--ddlc-grid); stroke-width: 2; }
 #map-range { fill: var(--ddlc-accent); opacity: .24; }
+#map-undo > rect { fill: color-mix(in srgb, var(--ddlc-danger) 30%, transparent); stroke: var(--ddlc-danger); stroke-width: 2; }
 .route-preview { stroke: var(--ddlc-accent); stroke-width: 5; stroke-dasharray: 6 4; }
 .route-preview.alternate { stroke: var(--ddlc-rule); stroke-width: 3; stroke-dasharray: 2 8; }
 .entry-marker circle { fill: var(--ddlc-code-ground); stroke: var(--ddlc-accent); }

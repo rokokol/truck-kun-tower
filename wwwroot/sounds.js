@@ -25,15 +25,13 @@ const sounds = (() => {
   };
   const running = () => enabled && audio?.state === 'running';
   const update = () => {
-    const ready = running();
-    const waiting = Audio && enabled && !ready;
-    const label = i18n.t(!Audio ? 'soundUnavailable' : waiting ? 'soundEnable' : ready ? 'soundOn' : 'soundOff');
+    const label = i18n.t(!Audio ? 'soundUnavailable' : enabled ? 'soundOn' : 'soundOff');
     button.disabled = !Audio;
-    button.title = label;
+    button.title = Audio && enabled && !running() ? i18n.t('soundWaiting') : label;
     document.getElementById('sound-label').textContent = label;
-    button.setAttribute('aria-label', i18n.t(waiting ? 'soundEnable' : 'sound'));
-    button.setAttribute('aria-pressed', String(ready));
-    button.querySelector('.sound-mark').dataset.state = !Audio ? 'unavailable' : ready ? 'on' : 'off';
+    button.setAttribute('aria-label', i18n.t('sound'));
+    button.setAttribute('aria-pressed', String(Boolean(Audio && enabled)));
+    button.querySelector('.sound-mark').dataset.state = !Audio ? 'unavailable' : enabled ? 'on' : 'off';
   };
   i18n.onChange(update);
   function unlock() {
@@ -69,10 +67,6 @@ const sounds = (() => {
     }
   }
   button.addEventListener('click', () => {
-    if (enabled && !running()) {
-      unlock().then(() => play('coin'));
-      return;
-    }
     enabled = !enabled;
     try { localStorage.setItem(key, enabled ? 'on' : 'off'); } catch {}
     update();

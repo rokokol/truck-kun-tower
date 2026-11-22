@@ -18,13 +18,114 @@ public sealed class BalanceRuleTests {
     }
 
     [Fact]
-    public void The_rune_hits_more_than_three_targets_in_its_zone() {
+    public void The_rune_hits_at_most_three_targets_in_its_zone() {
         int[] path = [64, 65, 66, 67, 68, 69, 70, 71];
         var board = Board.Open(path);
-        board.Build("pulse", path[4] + Maze.Width);
+        int rune = path[4] + Maze.Width;
+        board.Build("pulse", rune);
         board.Build("fence", path[6]);
         board.Order("armored", count: 2);
-        Assert.Contains(board.Play(), frame => frame.Shots.Length > 3);
+        var salvos = board.Play().Select(frame => frame.Shots.Count(shot => shot.Cell == rune)).ToArray();
+        Assert.Contains(3, salvos);
+        Assert.All(salvos, hits => Assert.InRange(hits, 0, 3));
+    }
+
+    [Fact]
+    public void The_rune_prefers_nearby_slimes_over_the_one_closest_to_the_keep() {
+        int[] path = [64, 65, 66, 67, 68, 69, 70, 71];
+        var board = Board.Open(path);
+        board.Play();
+        board.Play();
+        int rune = path[1] + Maze.Width;
+        board.Build("pulse", rune);
+        board.Order("swarm", count: 2);
+
+        var frame = board.Play().First(frame => path.Take(4).All(cell => frame.Mobs.Any(mob => mob.Cell == cell))
+            && frame.Shots.Any(shot => shot.Cell == rune));
+        Assert.Equal(path.Take(3), frame.Shots.Where(shot => shot.Cell == rune).Select(shot => shot.TargetCell).Order());
+        Assert.Equal(path[1], Assert.Single(frame.Aims, aim => aim.Cell == rune).TargetCell);
+    }
+
+    [Theory]
+    [InlineData(1, 26)]
+    [InlineData(2, 28)]
+    [InlineData(3, 30)]
+    [InlineData(4, 32)]
+    [InlineData(5, 34)]
+    public void A_giant_has_reduced_health_and_deals_three_damage_to_the_keep(int wave, int health) {
+        var board = Board.Open(Road);
+        for (int i = 1; i < wave; i++) board.Play();
+        board.Order("giant");
+        var fight = board.Play();
+        Assert.Equal(health, Assert.Single(fight[0].Mobs).Hp);
+        Assert.Equal(board.Keep - 3, fight[^1].Hp);
+    }
+
+    [Fact]
+    public void The_next_attack_budget_counts_only_surviving_defenses() {
+        var board = Board.Open(Road);
+        board.Build("bolt", board.Beside(Road[1]));
+        board.Build("fence", Road[2]);
+        board.Build("mine", Road[1]);
+        board.Order("giant");
+
+        foreach (int budget in new[] { 19, 22, 28, 29 }) {
+            board.Play();
+            Assert.Equal(budget, board.Gold(Duel.Attacker));
+        }
+    }
+
+    [Theory]
+    [InlineData("swarm")]
+    [InlineData("smart")]
+    public void Common_slimes_move_faster_without_matching_runners(string kind) {
+        var board = Board.Open(Road);
+        board.Order(kind);
+        var frames = board.Play();
+        int fourthStep = Array.FindIndex(frames, frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == Road[4]));
+        Assert.InRange(fourthStep, 5, 7);
+
+        var guide = JsonSerializer.SerializeToElement(Duel.Guide());
+        var unit = guide.GetProperty("units").EnumerateArray().Single(unit => unit.GetProperty("type").GetString() == kind);
+        Assert.Equal(fourthStep / 4m, unit.GetProperty("stepTicks").GetDecimal());
+    }
+
+    [Fact]
+    public void Armored_slimes_stop_next_to_a_tower_and_move_on_after_destroying_it() {
+        int[] road = [64, 65, 66, 67, 68, 69, 70, 71];
+        var board = Board.Open(road);
+        int tower = road[2] + Maze.Width;
+        board.Build("frost", tower);
+        board.Build("fence", road[4]);
+        board.Order("armored");
+
+        var frames = board.Play();
+        int firstHit = Array.FindIndex(frames, frame => frame.Buildings.Any(b => b.Cell == tower && b.Hp < b.Max));
+        Assert.True(firstHit > 0, "The tower must take a melee hit");
+        var damaged = Assert.Single(frames[firstHit].Buildings);
+        Assert.Equal(2, damaged.Max - damaged.Hp);
+        Assert.Contains(frames[firstHit].Siege, hit => hit.Cell == tower && hit.Melee);
+        int destroyed = Array.FindIndex(frames, frame => frame.Buildings.Length == 0);
+        Assert.True(destroyed > firstHit);
+        Assert.All(frames[firstHit..(destroyed + 1)], frame =>
+            Assert.Equal(road[2], frame.Mobs.Single(mob => mob.Id == 1).Cell));
+        Assert.Contains(frames[(destroyed + 1)..], frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == road[4]));
+        var damagedFence = frames.SelectMany(frame => frame.Fences).First(fence => fence.Hp < fence.Max);
+        Assert.Equal(2, damagedFence.Max - damagedFence.Hp);
+
+        foreach (int structure in new[] { tower, road[4] }) {
+            var hits = Enumerable.Range(0, frames.Length)
+                .Where(tick => frames[tick].Siege.Any(hit => hit.Melee && hit.Cell == structure && hit.MobId == 1))
+                .Take(2).ToArray();
+            Assert.Equal(2, hits.Length);
+            Assert.Equal(2, hits[1] - hits[0]);
+        }
+        int firstMove = Array.FindIndex(frames, frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == road[1]));
+        Assert.Equal(4, firstMove);
+        var armored = JsonSerializer.SerializeToElement(Duel.Guide()).GetProperty("units").EnumerateArray()
+            .Single(unit => unit.GetProperty("type").GetString() == "armored");
+        Assert.Equal(2, armored.GetProperty("interval").GetInt32());
+        Assert.Equal(4, armored.GetProperty("stepTicks").GetInt32());
     }
 
     [Fact]
@@ -145,8 +246,9 @@ public sealed class BalanceRuleTests {
         public int TargetCell => Y * Maze.Width + X;
     }
     sealed record Building(int Cell, int Hp, int Max);
-    sealed record Fence(int Cell);
-    sealed record Frame(int Hp, Mob[] Mobs, Target[] Shots, Target[] Aims, Fence[] Fences, Building[] Buildings) {
+    sealed record Fence(int Cell, int Hp, int Max);
+    sealed record SiegeHit(int Cell, int MobId, bool Melee);
+    sealed record Frame(int Hp, Mob[] Mobs, Target[] Shots, Target[] Aims, Fence[] Fences, Building[] Buildings, SiegeHit[] Siege) {
         public bool HasFence(int cell) => Fences.Any(fence => fence.Cell == cell);
     }
 

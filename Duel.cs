@@ -14,6 +14,8 @@ public sealed class Duel {
     const int FenceHealth = 16, KeepHealth = 10;
     const int RangedAmmo = 10, RangedCooldown = 4;
     const int StructureShotDamage = 4, KeepShotDamage = 1;
+    const int RuneTargets = 3;
+    static readonly int[] AttackerBonusPerSurvivor = [0, 1, 1, 2, 0];
     static readonly int[] DefenderBudget = [11, 12, 14, 16, 18], AttackerBudget = [16, 17, 20, 24, 29];
     static readonly ImmutableDictionary<string, int[]> AttackRows = new Dictionary<string, int[]> {
         ["bolt"] = Zone(3), ["cannon"] = Zone(2), ["pulse"] = Zone(2), ["frost"] = Zone(1),
@@ -46,7 +48,7 @@ public sealed class Duel {
     internal readonly record struct BuildingView(string Type, int Cell, int Hp, int Max);
     internal readonly record struct DefenseView(int Hp, ImmutableArray<BuildingView> Buildings, ImmutableArray<Fence> Fences);
     internal readonly record struct Target(int Cell, int X, int Y);
-    internal readonly record struct SiegeShot(int Cell, int X, int Y, int MobId);
+    internal readonly record struct SiegeShot(int Cell, int X, int Y, int MobId, bool Melee = false);
     readonly record struct SiegeTarget(int Cell, Building? Tower = null);
     internal readonly record struct Frame(int Hp, ImmutableArray<Mob> Mobs, ImmutableArray<Target> Shots,
         ImmutableArray<Target> Aims, ImmutableArray<Fence> Fences, ImmutableArray<BuildingView> Buildings,
@@ -375,7 +377,7 @@ public sealed class Duel {
             log.Clear();
         } else {
             gold[Defender] = DefenderBudget[last];
-            gold[Attacker] = AttackerBudget[last];
+            gold[Attacker] = AttackerBudget[last] + AttackerBonusPerSurvivor[last] * (towers.Count + fences.Count);
             deadline = replayEndsAt.AddSeconds(ThinkTime);
         }
     }
@@ -384,6 +386,7 @@ public sealed class Duel {
         int index;
         int facing = 1;
         int nextStep;
+        int stepRemainder = StepScale - 1;
         bool frozen;
         int lastFrozenAt = -1;
         bool stoppedByFence;
@@ -432,13 +435,15 @@ public sealed class Duel {
             return false;
         }
 
-        int BaseInterval => Kind switch {
-            "runner" or "balaclava" => 1, "giant" or "ranged" => 3, "armored" or "apc" => 4, _ => 2
-        };
+        void ScheduleStep(int tick) {
+            int interval = StepDuration(Kind) + stepRemainder;
+            nextStep = tick + interval / StepScale;
+            stepRemainder = interval % StepScale;
+        }
         int FenceHits => FenceDamage(Kind);
 
         public void Spawn(int tick) {
-            nextStep = tick + BaseInterval;
+            ScheduleStep(tick);
             for (int i = index + 1; i < path.Length; i++) {
                 int dx = path[i] % Maze.Width - X;
                 if (dx == 0) continue;
@@ -459,7 +464,9 @@ public sealed class Duel {
         int SiegeDistance(int cell) => Math.Max(Math.Abs(cell % Maze.Width - X), Math.Abs(cell / Maze.Width - Y));
 
         public bool AimSiege(List<Building> towers, Dictionary<int, int> fences, int keepHp) {
-            if (shotsLeft == 0 || Health <= 0 || keepHp <= 0) return false;
+            if (Health <= 0 || keepHp <= 0) return false;
+            if (Kind == "armored") return MeleeTower(towers) is not null;
+            if (shotsLeft == 0) return false;
             if (siegeTarget is { } held && InSiegeReach(held.Cell) &&
                 (held.Tower is { } heldTower ? heldTower.Hp > 0 && towers.Contains(heldTower) :
                     held.Cell == KeepCell || fences.ContainsKey(held.Cell))) return true;
@@ -482,8 +489,18 @@ public sealed class Duel {
             }
         }
 
+        Building? MeleeTower(List<Building> towers) => towers.Find(t => t.Hp > 0 && !IsTrap(t.Type) &&
+            Math.Abs(t.Cell % Maze.Width - X) + Math.Abs(t.Cell / Maze.Width - Y) == 1);
+
         public void FireSiege(int tick, List<Building> towers, Dictionary<int, int> fences, ref int keepHp,
             ImmutableArray<SiegeShot>.Builder siege) {
+            if (Kind == "armored") {
+                if (Health <= 0 || keepHp <= 0 || MeleeTower(towers) is not { } adjacent ||
+                    !SpendStep(tick, adjacent.Hp > ArmoredStructureDamage)) return;
+                adjacent.Hp -= ArmoredStructureDamage;
+                siege.Add(new(adjacent.Cell, X, Y, id, Melee: true));
+                return;
+            }
             if (tick < nextShot || !AimSiege(towers, fences, keepHp) || siegeTarget is not { } target) return;
             nextShot = tick + RangedCooldown;
             shotsLeft--;
@@ -494,22 +511,31 @@ public sealed class Duel {
             siege.Add(new(target.Cell, X, Y, id));
         }
 
-        public bool Advance(int tick, Dictionary<int, int> fences) {
-            if (tick < nextStep || Remaining == 0 || Unloading) return false;
-            nextStep = tick + BaseInterval;
+        bool SpendStep(int tick, bool repeatMelee = false) {
+            if (tick < nextStep) return false;
+            if (repeatMelee) nextStep = tick + ArmoredMeleeInterval;
+            else ScheduleStep(tick);
             // A frozen slime loses one whole step, which is what the ice on the board shows
             if (frozen) {
                 frozen = false;
                 return false;
             }
-            if (PassengerAt(index + 1)) return false;
+            return true;
+        }
+
+        public bool Advance(int tick, Dictionary<int, int> fences, ImmutableArray<SiegeShot>.Builder siege) {
+            if (Remaining == 0 || Unloading || tick < nextStep) return false;
             int nextCell = path[index + 1];
-            if (fences.TryGetValue(nextCell, out int health)) {
+            bool blockedByFence = fences.TryGetValue(nextCell, out int health);
+            if (!SpendStep(tick, Kind == "armored" && blockedByFence && health > ArmoredStructureDamage) ||
+                PassengerAt(index + 1)) return false;
+            if (blockedByFence) {
                 if (Kind == "apc") {
                     fences.Remove(nextCell);
                     stoppedByFence = true;
                 } else {
                     int left = health - FenceHits;
+                    if (Kind == "armored") siege.Add(new(nextCell, X, Y, id, Melee: true));
                     if (left > 0) fences[nextCell] = left;
                     else fences.Remove(nextCell);
                 }
@@ -522,10 +548,20 @@ public sealed class Duel {
         }
     }
 
-    static int ContactDamage(string kind) => kind switch { "giant" => 4, "balaclava" => 2, "apc" => 0, _ => 1 };
-    static int FenceDamage(string kind) => kind is "giant" or "armored" ? 3 : 1;
+    const int StepScale = 4;
+    static int StepDuration(string kind) => kind switch {
+        "swarm" or "smart" => 7,
+        "runner" or "balaclava" => StepScale,
+        "giant" or "ranged" => 3 * StepScale,
+        "armored" or "apc" => 4 * StepScale,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
+
+    static int ContactDamage(string kind) => kind switch { "giant" => 3, "balaclava" => 2, "apc" => 0, _ => 1 };
+    const int ArmoredStructureDamage = 2, ArmoredMeleeInterval = 2;
+    static int FenceDamage(string kind) => kind switch { "giant" => 3, "armored" => ArmoredStructureDamage, _ => 1 };
     static int UnitHealth(string kind, int wave) => kind switch {
-        "giant" => 26 + 2 * wave,
+        "giant" => (26 + 2 * wave) * 95 / 100,
         "armored" => 6 + wave,
         "runner" => 1,
         "ranged" => 8 + wave,
@@ -539,18 +575,27 @@ public sealed class Duel {
         string[] structures = ["bolt", "cannon", "pulse", "frost", "spikes", "mine", "fence", "keep"];
         return new {
             waveCount = WaveCount,
+            budgets = Enumerable.Range(0, WaveCount).Select(index => new {
+                wave = index + 1,
+                defender = DefenderBudget[index],
+                attacker = AttackerBudget[index],
+                bonusPerStructure = AttackerBonusPerSurvivor[index]
+            }).ToArray(),
             units = units.Select(type => new {
                 type, hpFirst = UnitHealth(type, 1), hpLast = UnitHealth(type, WaveCount),
                 damage = type == "ranged" ? StructureShotDamage : ContactDamage(type),
                 keepDamage = type == "ranged" ? KeepShotDamage : ContactDamage(type),
                 fenceDamage = type == "apc" ? 0 : FenceDamage(type),
-                radius = Radius(type), interval = type == "ranged" ? RangedCooldown : 0
+                radius = type == "armored" ? 1 : Radius(type),
+                interval = type switch { "ranged" => RangedCooldown, "armored" => ArmoredMeleeInterval, _ => 0 },
+                stepTicks = (decimal)StepDuration(type) / StepScale
             }).ToArray(),
             structures = structures.Select(type => {
                 int hp = type == "keep" ? KeepHealth : type == "fence" ? FenceHealth : TowerHealth(type);
                 int radius = Radius(type);
-                var (damage, interval, _) = radius == 0 ? (type == "spikes" ? SpikeDamage : 0, 0, false) : Stats(type);
-                return new { type, hpFirst = hp, hpLast = hp, damage, radius, interval };
+                var (damage, interval) = radius == 0 ? (type == "spikes" ? SpikeDamage : 0, 0) : Stats(type);
+                return new { type, hpFirst = hp, hpLast = hp, damage, radius, interval,
+                    maxTargets = type == "pulse" ? RuneTargets : (int?)null };
             }).ToArray()
         };
 
@@ -570,11 +615,11 @@ public sealed class Duel {
     ImmutableArray<BuildingView> buildingsNow() => towers
         .Select(t => new BuildingView(t.Type, t.Cell, t.Hp, t.Max)).ToImmutableArray();
 
-    static (int Damage, int Every, bool HitsAll) Stats(string type) => type switch {
-        "bolt" => (4, 6, false),
-        "pulse" => (1, 3, true),
-        "cannon" => (13, 8, false),
-        "frost" => (0, 2, true),
+    static (int Damage, int Every) Stats(string type) => type switch {
+        "bolt" => (4, 6),
+        "pulse" => (1, 3),
+        "cannon" => (13, 8),
+        "frost" => (0, 2),
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
@@ -641,8 +686,9 @@ public sealed class Duel {
         for (int tick = 0; tick < FightTickLimit && hp > 0 &&
              (pending.Values.Any(queue => queue.Count > 0) || mobs.Count > 0); tick++) {
             var shots = ImmutableArray.CreateBuilder<Target>();
+            var siege = ImmutableArray.CreateBuilder<SiegeShot>();
             foreach (var mob in mobs)
-                if (!mob.AimSiege(towers, fences, hp) && mob.Advance(tick, fences))
+                if (!mob.AimSiege(towers, fences, hp) && mob.Advance(tick, fences, siege))
                     TriggerTrap(mob, traps, shots);
             foreach (var (gate, queue) in pending) {
                 if (queue.Count == 0 || mobs.Any(mob => mob.Health > 0 && mob.Cell == gate)) continue;
@@ -653,22 +699,25 @@ public sealed class Duel {
             }
 
             var aims = ImmutableArray.CreateBuilder<Target>();
-            var siege = ImmutableArray.CreateBuilder<SiegeShot>();
             foreach (var tower in towers) {
                 if (IsTrap(tower.Type)) continue;
-                var (damage, every, hitsAll) = Stats(tower.Type);
+                var (damage, every) = Stats(tower.Type);
                 var rows = AttackRows[tower.Type];
                 int x = tower.Cell % Maze.Width, y = tower.Cell / Maze.Width;
                 var inRange = mobs.Where(m => m.Health > 0 && InZone(rows, m.X - x, m.Y - y)).ToList();
                 if (inRange.Count == 0) continue;
-                var lead = inRange.MinBy(m => m.Remaining)!;
+                var runeTargets = tower.Type == "pulse"
+                    ? inRange.OrderBy(m => Square(m.X - x) + Square(m.Y - y)).ThenBy(m => m.Remaining)
+                        .Take(RuneTargets).ToArray()
+                    : null;
+                var lead = runeTargets?[0] ?? inRange.MinBy(m => m.Remaining)!;
                 aims.Add(new(tower.Cell, lead.X, lead.Y));
                 if (tick % every != 0) continue;
                 if (tower.Type == "frost") {
                     foreach (var mob in inRange.Where(m => m.Slow()))
                         shots.Add(new(tower.Cell, mob.X, mob.Y));
-                } else if (hitsAll) {
-                    foreach (var mob in inRange) Strike(mob, damage);
+                } else if (runeTargets is not null) {
+                    foreach (var mob in runeTargets) Strike(mob, damage);
                 } else Strike(lead, damage);
 
                 // A hit lands at once in the simulation, so the shot names the slime's own cell: the

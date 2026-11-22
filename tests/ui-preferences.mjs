@@ -65,8 +65,19 @@ try {
         } };` });
       if (!path.startsWith('/api/')) return route.continue();
       if (path === '/api/rules') return route.fulfill({json: {
-        waveCount: 5, units: [{type: 'swarm', hpFirst: 3, hpLast: 7, damage: 1, fenceDamage: 1, radius: 0, interval: 0}],
-        structures: [{type: 'pulse', hpFirst: 24, hpLast: 24, damage: 2, radius: 2, interval: 3}],
+        waveCount: 5,
+        budgets: [
+          {wave: 1, defender: 11, attacker: 16, bonusPerStructure: 0},
+          {wave: 2, defender: 12, attacker: 17, bonusPerStructure: 1},
+          {wave: 3, defender: 14, attacker: 20, bonusPerStructure: 1},
+          {wave: 4, defender: 16, attacker: 24, bonusPerStructure: 2},
+          {wave: 5, defender: 18, attacker: 29, bonusPerStructure: 0},
+        ],
+        units: [
+          {type: 'swarm', hpFirst: 3, hpLast: 7, damage: 1, fenceDamage: 1, radius: 0, interval: 0, stepTicks: 1.75},
+          {type: 'armored', hpFirst: 7, hpLast: 11, keepDamage: 1, fenceDamage: 2, radius: 1, interval: 2, stepTicks: 4},
+        ],
+        structures: [{type: 'pulse', hpFirst: 24, hpLast: 24, damage: 1, radius: 2, interval: 3, maxTargets: 3}],
       }});
       const fixtures = {
         'POST /api/auth/register': { token: 'fixture-account', user },
@@ -77,7 +88,9 @@ try {
         'GET /api/invites': [{ id: 'i1', roomId: duel.id, from: opponent }],
         'GET /api/duels': [duel, {id: 'closed', status: 'finished', replayId: 'm-old', opponent: {nickname: 'Побеждённый'}},
           {id: 'cancelled', status: 'cancelled', opponent: {nickname: 'Сбежавший'}},
-          ...Array.from({length: 3}, (_, i) => ({id: `duel-${i}`, status: 'finished', opponent: {nickname: `Past duel ${i}`} })),
+          {id: 'duel-0', status: 'cancelled', startedAt: '2026-11-20T12:00:00Z'},
+          {id: 'duel-1', status: 'cancelled', startedAt: null},
+          {id: 'duel-2', status: 'finished', opponent: {nickname: 'Past duel 2'}},
           {id: 'duel-3', status: 'interrupted', opponent: {nickname: 'Past duel 3'}}],
         'GET /api/matches/mine': [{id: 'm-old', finishedAt: '2026-11-19T10:30:00Z', hasReplay: true,
           defender: user, attacker: opponent}, ...Array.from({length: 5}, (_, i) => ({id: `match-${i}`,
@@ -195,15 +208,26 @@ try {
     const help = button('Справка');
     await help.click({timeout: 4000});
     const guide = page.getByRole('dialog', {name: 'Справка'});
-    await visible(guide.getByRole('row', {name: /Стайка.*3–7.*1.*0.*0/}));
-    await visible(guide.getByRole('row', {name: /Руна.*24.*2.*2.*3/}));
+    await visible(guide.getByRole('row', {name: /Стайка.*3–7.*1.*0.*0.*1,75/}));
+    const armoredRule = guide.getByRole('row', {name: /^Бронированные/});
+    assert.match(await armoredRule.innerText(), /2 забору и башне.*1 крепости.*не по диагонали.*продолжает путь/is);
+    assert.deepEqual((await armoredRule.getByRole('cell').allTextContents()).slice(-3), ['1', '2', '4']);
+    await visible(guide.getByRole('row', {name: /Руна.*24.*1.*3 целям.*2.*3/}));
+    const budgets = guide.getByRole('table', {name: 'Монеты по волнам'});
+    await visible(budgets.getByRole('columnheader', {name: 'Бонус за постройку'}));
+    assert.deepEqual(await budgets.locator('tbody tr').evaluateAll(rows =>
+      rows.map(row => Array.from(row.cells, cell => cell.textContent))),
+      [['1', '11', '16', '—'], ['2', '12', '17', '+1'], ['3', '14', '20', '+1'],
+        ['4', '16', '24', '+2'], ['5', '18', '29', '—']]);
+    await visible(guide.getByText(/Неистраченные монеты не переносятся/));
+    await visible(guide.getByText(/Крепость не считается/));
     assert.ok(await guide.evaluate(node => node.getBoundingClientRect().width <= innerWidth && node.scrollWidth <= node.clientWidth));
     const art = guide.locator('.guide-table:first-child svg');
     await art.last().waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll('.guide-table:first-child svg')]
       .every(svg => svg.getBBox().width > 0));
     assert.deepEqual(await art.locator('use').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))),
-      ['heart', 'hit-spark', 'attack-radius', 'attack-interval', 'swarm'].map(id => `actors.svg#${id}`));
+      ['heart', 'hit-spark', 'attack-radius', 'attack-interval', 'runner', 'swarm', 'armored'].map(id => `actors.svg#${id}`));
     assert.ok(await guide.getByRole('rowheader', {name: 'Стайка'}).evaluate(cell => {
       const photo = cell.querySelector('.guide-portrait').getBoundingClientRect();
       const label = cell.querySelector('.guide-portrait').nextElementSibling.getBoundingClientRect();
@@ -225,6 +249,16 @@ try {
     await button(/^Звук$/).click();
     await button('EN').click();
     assert.equal((await scheme()).lang, 'en');
+    await button('Guide').click();
+    const englishGuide = page.getByRole('dialog', {name: 'Guide'});
+    await visible(englishGuide.getByRole('columnheader', {name: 'Ticks per tile'}));
+    await visible(englishGuide.getByRole('cell', {name: '1.75', exact: true}));
+    await visible(englishGuide.getByRole('row', {name: /Armored slimes.*not diagonally.*continue along the route/i}));
+    await visible(englishGuide.getByText(/Fewer ticks per tile means faster movement/));
+    const englishBudgets = englishGuide.getByRole('table', {name: 'Coins by wave'});
+    await visible(englishBudgets.getByRole('row', {name: '4 16 24 +2'}));
+    await visible(englishGuide.getByText(/Unspent coins do not carry over/));
+    await page.keyboard.press('Escape');
     assert.equal(await page.getByRole('tab', { name: 'Register' }).getAttribute('aria-selected'), 'true');
     await visible(page.getByRole('alert').filter({ hasText: /Action unavailable/ }).getByText('Error', { exact: true }));
     assert.equal(await page.getByLabel('Nickname', { exact: true }).inputValue(), user.nickname);
@@ -318,11 +352,15 @@ try {
     await visible(history.getByText(/November 19, 2026/));
     assert.equal(await history.getByRole('link', {name: 'Replay'}).getAttribute('href'), '?replay=m-old');
     const duels = page.getByRole('region', {name: 'My duels'});
+    await visible(duels.getByRole('button', {name: 'Leave', exact: true}));
+    assert.equal(await page.getByText(/Tabs share the account/).count(), 0);
     for (const list of [duels, history]) {
       await visible(list.getByText('Page 1', {exact: true}));
       assert.equal(await list.getByRole('listitem').count(), 5);
       assert.equal(await list.getByRole('button', {name: 'Previous'}).isDisabled(), true);
     }
+    await visible(duels.getByText('Guest', {exact: true}));
+    await visible(duels.getByText('open seat', {exact: true}));
     await duels.getByRole('button', {name: 'Next'}).click();
     await visible(duels.getByText('Past duel 3'));
     const restarted = duels.locator('.duel').filter({hasText: 'Past duel 3'});
@@ -393,10 +431,32 @@ try {
     await visible(page.getByRole('heading', { name: /Wave 1 of 5.*planning/ }));
     assert.equal(await page.locator('header').evaluate(node => node.inert), false);
     await visible(page.getByText(`Opponent: ${opponent.nickname}`, { exact: true }));
+    await visible(page.getByRole('button', {name: /^leave$/i}).and(page.locator('#leave')));
     const [readyBox, clockBox, boardBox] = await Promise.all(['ready', 'clock', 'board'].map(id => page.locator(`#${id}`).boundingBox()));
     assert.ok(readyBox && clockBox && boardBox && readyBox.y + readyBox.height <= boardBox.y &&
       readyBox.y < clockBox.y + clockBox.height && clockBox.y < readyBox.y + readyBox.height,
     'The ready button belongs beside the clock above the board');
+    const corner = page.locator('#board-corner');
+    assert.ok(await corner.count(), 'The coordinate corner contains a sticker');
+    assert.ok(await corner.evaluate(node => {
+      const bounds = node.getBoundingClientRect();
+      const rows = document.querySelector('#board-rows').getBoundingClientRect();
+      const columns = document.querySelector('#board-columns').getBoundingClientRect();
+      return Math.abs(bounds.left - rows.left) < 1 && Math.abs(bounds.top - columns.top) < 1 &&
+        node.getAttribute('aria-hidden') === 'true' && node.querySelector('use').getBBox().width > 0;
+    }), 'The decorative sprite renders in the corner, not over an axis');
+    const row = button('Row 2');
+    const column = button('Column 3');
+    assert.equal(await page.getByRole('button', {name: /^Row \d+$/}).count(), board.height);
+    assert.equal(await page.getByRole('button', {name: /^Column \d+$/}).count(), board.width);
+    const axis = page.locator('#map-axis rect');
+    await row.hover();
+    assert.deepEqual(await axis.evaluate(node => [node.x.baseVal.value, node.y.baseVal.value, node.width.baseVal.value, node.height.baseVal.value]), [0, 40, 200, 40]);
+    await column.hover();
+    assert.deepEqual(await axis.evaluate(node => [node.x.baseVal.value, node.y.baseVal.value, node.width.baseVal.value, node.height.baseVal.value]), [80, 0, 40, 120]);
+    await page.mouse.move(0, 0);
+    assert.equal(await axis.count(), 0);
+    assert.equal(await page.locator('#hint').isHidden(), true, 'No hint before group selection');
     assert.equal(await button('Gate 1').isDisabled(), true, 'Select a group before deploying');
     await button(/Smart slimes/).click();
     await button('Gate 1').hover();
@@ -407,7 +467,17 @@ try {
     await visible(page.getByRole('heading', { name: /Волна 1 из 5.*подготовка/ }));
     await button('Вход 1').hover();
     await visible(page.getByText(/Вход 1.*кратчайший путь/));
-    await visible(page.getByText(/Гигант.*Вход 1/));
+    await visible(page.locator('#actions [data-action=armored] .action-hint').filter({hasText: /останавливаются у башен/i}));
+    const giantOrder = page.locator('#orders li').filter({hasText: /Гигант.*Вход 1/});
+    await visible(giantOrder);
+    await giantOrder.getByRole('button').hover();
+    const undoMark = page.locator('#map-undo rect');
+    assert.equal(await undoMark.getAttribute('x', {timeout: 1000}), '120');
+    const undoSprite = page.locator('#map-undo use');
+    assert.equal(await undoSprite.getAttribute('href', {timeout: 1000}), 'actors.svg#giant');
+    await page.mouse.move(0, 0);
+    assert.equal(await undoMark.count(), 0);
+    assert.equal(await undoSprite.count(), 0);
     assert.equal(await button(/Умные слизни/).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('room')), 'fixture');
     await shot('ru-game');
@@ -425,8 +495,32 @@ try {
     await button('RU').click();
     await visible(page.getByRole('alert').filter({ hasText: /Достигнут лимит покупок этого типа/ }));
     await button('EN').click();
+    await page.clock.runFor(3000);
+    await visible(limitError);
+    if (width === 1280) await page.emulateMedia({reducedMotion: 'no-preference'});
+    await page.clock.runFor(2100);
+    if (width === 1280) {
+      assert.ok(await limitError.evaluate(node => {
+        const fade = node.getAnimations().find(animation => animation.effect.getKeyframes().at(-1).opacity === '0');
+        if (!fade) return false;
+        fade.pause();
+        fade.currentTime = fade.effect.getTiming().duration / 2;
+        const opacity = Number(getComputedStyle(node).opacity);
+        fade.finish();
+        return opacity > 0 && opacity < 1;
+      }), 'The error stays on screen and fades before it is removed');
+    } else {
+      assert.equal(await limitError.isHidden(), true, 'Reduced motion skips the fade');
+    }
+    await limitError.waitFor({state: 'hidden'});
     await button('Gate 1').press('Enter');
-    await visible(page.getByText(/Smart slimes · Gate 1/));
+    const smartOrder = page.locator('#orders li').filter({hasText: /Smart slimes · Gate 1/});
+    await smartOrder.getByRole('button').hover();
+    assert.equal(await undoSprite.getAttribute('href'), 'actors.svg#smart');
+    await page.locator('#orders li').filter({hasText: /Giant · Gate 1/}).getByRole('button').hover();
+    assert.equal(await undoSprite.getAttribute('href'), 'actors.svg#giant');
+    assert.equal(await undoMark.getAttribute('x'), '120');
+    await page.mouse.move(0, 0);
     assert.equal(await page.locator('#commit').count(), 0, 'There must be no second confirmation button');
     assert.equal(moves, 3);
     await gameError.waitFor({ state: 'hidden' });
@@ -434,6 +528,7 @@ try {
     await shot('en-game');
 
     const card = type => page.locator(`#actions [data-action=${type}]`);
+    assert.match(await card('armored').innerText(), /stop to attack adjacent towers/i);
     const pushState = async patch => {
       current = { ...current, ...patch };
       await page.evaluate(() => refresh());

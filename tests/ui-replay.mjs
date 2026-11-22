@@ -37,7 +37,8 @@ try {
     const other = {...ranged, id: 2, x: 3};
     const giant = {id: 3, x: 5, y: 3, kind: 'giant', hp: 12, max: 24, frozen: false};
     const troop = {id: 4, x: 5, y: 2, kind: 'balaclava', hp: 2, max: 4, frozen: false};
-    const mobs = [apc, ranged, other, {...giant, x: 4}, troop, {...troop, id: 5}, {...troop, id: 6}];
+    const armored = {id: 5, x: 7, y: 2, kind: 'armored', hp: 7, max: 7};
+    const mobs = [apc, ranged, other, {...giant, x: 4}, troop, armored, {...troop, id: 6}];
     const mine = {type: 'mine', cell: 27, hp: 1, max: 1};
     const towers = [bolt, spikes, frost, mine];
     const base = {matchId: 'round1', width: 12, height: 6, joined: true, seat: 0, last: 0, done: false, locked: false,
@@ -46,8 +47,9 @@ try {
       prices: {bolt: 5, pulse: 6, cannon: 8, frost: 6, spikes: 3, fence: 4}};
     const idle = {hp: 25, buildings: towers, fences: [fence], mobs, shots: [], aims: [{cell: bolt.cell, x: 2, y: 3}], siege: []};
     const moving = {...idle, hp: 15, buildings: [{...bolt, hp: 7}, frost], fences: [{...fence, hp: 1}],
-      mobs: [{...apc, x: 2, hp: 12, facing: 1}, ranged, other, giant, {...troop, id: 5}, {...troop, id: 6}, {...other, id: 7, kind: 'runner', x: 0, hp: 1, max: 1}],
-      aims: [], siege: [{cell: bolt.cell, x: ranged.x, y: ranged.y, mobId: ranged.id}],
+      mobs: [{...apc, x: 2, hp: 12, facing: 1}, ranged, other, giant, armored, {...troop, id: 6}, {...other, id: 7, kind: 'runner', x: 0, hp: 1, max: 1}],
+      aims: [], siege: [{cell: bolt.cell, x: ranged.x, y: ranged.y, mobId: ranged.id},
+        {cell: fence.cell, x: armored.x, y: armored.y, mobId: armored.id, melee: true}],
       shots: [{cell: spikes.cell, x: giant.x, y: giant.y}, {cell: mine.cell, x: 3, y: 2},
         {cell: bolt.cell, x: giant.x, y: giant.y}]};
     const still = {...moving, mobs: [...moving.mobs].reverse().map(m => m.id === 0 ? {...m, frozen: true} : m), shots: [], siege: []};
@@ -114,6 +116,8 @@ try {
     check(mob(1).querySelector('.siege-muzzle') && !mob(2).querySelector('.siege-muzzle') &&
       document.querySelector('.siege-streak') && document.querySelector('.bolt-shot, .cannon-shot'),
       'Siege streak, tower sight line or mobId-specific muzzle is missing');
+    check(document.querySelector('.melee-hit') && !mob(5).querySelector('.siege-muzzle') &&
+      document.querySelectorAll('.siege-streak').length === 1, 'A melee hit must not draw a ranged shot');
     const move = carrier.getAnimations()[0];
     const squash = carrier.querySelector('.mob-body').getAnimations()[0];
     check(move && squash, 'Step must interpolate and squash once');

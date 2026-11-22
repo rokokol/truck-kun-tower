@@ -546,6 +546,30 @@ async function roomWatcher(token) {
   pass('decline closes a waiting room; a match start cancels pending invitations for both players');
 }
 
+// ── reciprocal invitations ────────────────────────────────────────────────
+{
+  const host = {token: anna.token}, opponent = {token: boris.token};
+  const watcher = await roomWatcher(anna.token);
+  try {
+    const first = await post('/api/duels', {side: 'attacker'}, {...host, expect: 201});
+    const invite = await post('/api/invites', {friendId: boris.id, roomId: first.id}, {...host, expect: 201});
+    const second = await post('/api/duels', {side: 'attacker'}, {...opponent, expect: 201});
+    const matched = await post('/api/invites', {friendId: anna.id, roomId: second.id}, {...opponent, expect: 201});
+    assert.equal(matched.id, invite.id);
+    assert.equal(matched.roomId, first.id);
+    assert.equal(matched.session.id, first.id);
+    assert.equal(matched.session.side, 'defender');
+    assert.equal((await stateOf(first.id, opponent)).joined, true);
+    await call(`/api/duels/${second.id}/state`, {...opponent, expect: 404});
+    assert.equal((await call('/api/duels', opponent)).find(row => row.id === second.id)?.status, 'Cancelled');
+    assert.deepEqual(await call('/api/invites', opponent), []);
+    await call(`/api/duels/${first.id}`, {...host, method: 'DELETE', expect: 204});
+  } finally {
+    watcher.close();
+  }
+  pass('a reciprocal send accepts the first invite and moves the second player to its room');
+}
+
 // ── removing a friend and an account ───────────────────────────────────────
 await call(`/api/friends/${boris.id}`, { method: 'DELETE', token: cath.token, expect: 404 });
 await call(`/api/friends/${boris.id}`, { method: 'DELETE', token: anna.token, expect: 204 });

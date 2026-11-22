@@ -63,7 +63,7 @@ public sealed class RoomService(
             }
         }, token);
 
-    async Task<DuelSession> JoinCoreAsync(PlayerRef who, string id, int? side, CancellationToken token, bool fromPool = false) {
+    internal async Task<DuelSession> JoinCoreAsync(PlayerRef who, string id, int? side, CancellationToken token, bool fromPool = false) {
         var game = Require(id);
         rooms.RequireAvailable(who, id);
         Duel.Seat seat;
@@ -165,7 +165,7 @@ public sealed class RoomService(
     public Task CancelAsync(PlayerRef who, string id, CancellationToken token = default) =>
         WithMembership(() => CancelCoreAsync(who, id), token);
 
-    async Task<bool> CancelCoreAsync(PlayerRef who, string id) {
+    internal async Task<bool> CancelCoreAsync(PlayerRef who, string id) {
         var game = Require(id);
         lock (game) {
             SeatOrThrow(game, who);

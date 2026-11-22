@@ -22,13 +22,14 @@
   }
 
   function damage(row) {
+    if (row.type === 'armored') return t('guide.armored', {structure: row.fenceDamage, keep: row.keepDamage});
     if (row.type === 'ranged') return t('guide.ranged', {structure: row.damage, keep: row.keepDamage});
-    if (['apc', 'mine', 'frost', 'pulse'].includes(row.type)) return t(`guide.${row.type}`, {damage: row.damage});
+    if (['apc', 'mine', 'frost', 'pulse'].includes(row.type)) return t(`guide.${row.type}`, {damage: row.damage, targets: row.maxTargets});
     if (row.keepDamage != null) return t('guide.unitDamage', {keep: row.keepDamage, fence: row.fenceDamage});
     return row.damage;
   }
 
-  function table(title, rows) {
+  function table(title, rows, showSpeed = false) {
     const node = document.createElement('table');
     node.className = 'guide-table';
     node.append(element('caption', t(title)));
@@ -36,6 +37,7 @@
     for (const [key, symbol] of [
       ['guideName'], ['guideHp', 'heart'], ['guideDamage', 'hit-spark'],
       ['guideRadius', 'attack-radius'], ['guideInterval', 'attack-interval'],
+      ...(showSpeed ? [['guideSpeed', 'runner']] : []),
     ]) {
       const label = element('span', t(key));
       const column = Object.assign(document.createElement('th'), {scope: 'col'});
@@ -57,6 +59,25 @@
       line.append(name);
       const hp = row.hpFirst === row.hpLast ? row.hpFirst : `${row.hpFirst}–${row.hpLast}`;
       for (const value of [hp, damage(row), row.radius, row.interval]) line.insertCell().textContent = value;
+      if (showSpeed) line.insertCell().textContent = row.stepTicks.toLocaleString(document.documentElement.lang);
+    }
+    return node;
+  }
+
+  function budgetTable(budgets) {
+    const node = document.createElement('table');
+    node.className = 'guide-table';
+    node.append(element('caption', t('guideBudgets')));
+    const head = node.createTHead().insertRow();
+    for (const key of ['guideWave', 'defender', 'attacker', 'guideStructureBonus'])
+      head.append(Object.assign(element('th', t(key)), {scope: 'col'}));
+
+    const section = node.createTBody();
+    for (const {wave, defender, attacker, bonusPerStructure} of budgets) {
+      const line = section.insertRow();
+      line.append(Object.assign(element('th', wave), {scope: 'row'}));
+      for (const value of [defender, attacker, bonusPerStructure ? `+${bonusPerStructure}` : '—'])
+        line.insertCell().textContent = value;
     }
     return node;
   }
@@ -65,9 +86,12 @@
     status.hidden = Boolean(rules);
     status.textContent = rules ? '' : t(loading ? 'loading' : 'guideUnavailable');
     if (!rules) return;
-    const notes = element('p', t('guideNotes', {total: rules.waveCount}));
+    const notes = element('p', `${t('guideNotes', {total: rules.waveCount})}. ${t('guideSpeedNote')}`);
     notes.className = 'fine';
-    body.replaceChildren(table('guideUnits', rules.units), table('guideStructures', rules.structures), notes);
+    const economy = element('p', t('guideEconomy'));
+    economy.className = 'fine';
+    body.replaceChildren(table('guideUnits', rules.units, true), table('guideStructures', rules.structures), notes,
+      budgetTable(rules.budgets), economy);
   }
 
   trigger.onclick = async () => {

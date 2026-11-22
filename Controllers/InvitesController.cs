@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-// Inviting a friend into a live room. Accepting settles the invite only; joining stays in the duels API.
 [ApiController]
 [Route("api/invites")]
 [Authorize]

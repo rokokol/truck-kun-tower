@@ -37,7 +37,14 @@ function paintError() {
   el('error-detail').textContent = i18n.text(errorNote);
   el('error').hidden = !errorNote;
 }
-const fail = error => { errorNote = feedback(error); paintError(); };
+let cancelErrorExpiry;
+function setGameError(note) {
+  cancelErrorExpiry?.();
+  errorNote = note;
+  paintError();
+  cancelErrorExpiry = note ? Tower.expireError(el('error'), () => setGameError(null)) : null;
+}
+const fail = error => setGameError(feedback(error));
 
 function makeField() {
   const {width, height, paths, alternatePaths, fenceCells} = state;
@@ -62,16 +69,16 @@ function makeField() {
   }).join('');
   const alternates = new Map(entries.map(id => [id, alternatePaths.filter(path => path[0] === id)]));
   field = {routes, entries, keep, road, markers, alternates};
-  el('board').style.setProperty('--cols', width);
-  el('board').style.setProperty('--rows', height);
+  el('board-layout').style.setProperty('--cols', width);
+  el('board-layout').style.setProperty('--rows', height);
   el('board').style.aspectRatio = `${width} / ${height}`;
   el('map').setAttribute('viewBox', `0 0 ${width * tile} ${height * tile}`);
   // Towers keep their own layer, so a turn can be eased by CSS instead of redrawn
   clearBattleActors();
   el('map').innerHTML = `<g id="map-road">${road}</g><g id="map-markers">${markers}</g>` +
-    `<g id="map-route"></g><g id="map-range"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
+    `<g id="map-axis"></g><g id="map-route"></g><g id="map-range"></g><g id="map-keep"></g><g id="map-ghost"></g><g id="map-fences"></g>` +
     `<g id="map-towers"></g><g id="map-dust"></g><g id="map-mobs"></g><g id="map-structure-hp"></g>` +
-    `<g id="map-shots"></g><g id="map-hits"></g>`;
+    `<g id="map-shots"></g><g id="map-hits"></g><g id="map-undo"></g>`;
   el('cells').replaceChildren();
   // A swap rebuilds the buttons: the defender sees walls and the attacker sees gates
   for (const id of archive ? [] : defending() ? [...walls, ...fenceCells] : entries) {
@@ -89,10 +96,40 @@ function makeField() {
     button.onclick = () => { if (!button.disabled && action && planning()) move(action, id); };
     el('cells').append(button);
   }
+  makeAxes(width, height);
   paintCells();
 }
 
+function makeAxes(width, height) {
+  const layer = el('map-axis');
+  const axes = [['board-rows', height, true], ['board-columns', width, false]];
+  let hovered, focused;
+  const show = () => {
+    layer.innerHTML = (hovered ?? focused)?.dataset.highlight ?? '';
+  };
+  for (const [id, count, row] of axes) {
+    const axis = el(id);
+    axis.replaceChildren();
+    for (let i = 0; i < count; i++) {
+      const number = document.createElement('button');
+      number.type = 'button';
+      number.textContent = i + 1;
+      const [x, y, w, h] = (row ? [0, i, width, 1] : [i, 0, 1, height]).map(n => n * tile);
+      number.dataset.highlight = `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+      number.onpointerenter = () => { hovered = number; show(); };
+      number.onpointerleave = () => { hovered = null; show(); };
+      number.onfocus = () => { focused = number; show(); };
+      number.onblur = () => { focused = null; show(); };
+      axis.append(number);
+    }
+  }
+}
+
 function paintCells() {
+  for (const [id, key] of [['board-rows', 'boardRow'], ['board-columns', 'boardColumn']])
+    for (const number of el(id).children)
+      number.setAttribute('aria-label', tr(key, {index: number.textContent}));
+
   for (const button of el('cells').children) {
     const id = Number(button.dataset.cell);
     const [x, y] = coords(id).map(value => value + 1);
@@ -328,6 +365,11 @@ function siegeMuzzle(angle) {
 function siegeShot(target) {
   const [x, y] = center(target.x, target.y);
   const [tx, ty] = point(target.cell);
+  if (target.melee) {
+    return `<g class="siege-shot" transform="translate(${tx} ${ty}) rotate(${target.angle})">
+      <path class="siege melee-hit" d="M-14-7l5 3m-8 4h7m-4 7 5-3"/>
+    </g>`;
+  }
   const range = Math.hypot(tx - x, ty - y);
   const reach = Math.min(muzzleReach, range);
   const tail = Math.min(23, range - reach);
@@ -398,7 +440,7 @@ function drawBattle(frame, damage, previous, moveMs = 0, showImpact = false) {
     return healthIndicator(x, y + (trap(type) ? 14 : -17), 22, hp, max);
   }).join('');
   const siege = (frame?.siege ?? []).map(t => ({...t, angle: siegeDirection(t)}));
-  const siegeAngles = new Map(siege.map(t => [t.mobId, t.angle]));
+  const siegeAngles = new Map(siege.filter(t => !t.melee).map(t => [t.mobId, t.angle]));
   syncMobs(frame?.mobs ?? [], moveMs, siegeAngles);
   el('map-shots').innerHTML = shots.map(t => {
     // A shot can outlive its source in the same frame.
@@ -422,11 +464,11 @@ function paintClock() {
 }
 
 function paintPlanHint() {
-  const guidance = !action ? (defending() ? 'chooseBuilding' : 'chooseGroup')
+  const guidance = !action ? (defending() ? 'chooseBuilding' : '')
     : defending() ? (onRoad(action) ? 'chooseRoad' : 'chooseWall') : 'chooseGate';
   const routeName = action === 'smart' ? 'shortestRoute' : 'randomRoute';
   const hint = !planning() ? '' : cell !== undefined && !defending()
-    ? tr('selectedGate', { gate: entry(cell), route: message(routeName) }) : tr(guidance);
+    ? tr('selectedGate', { gate: entry(cell), route: message(routeName) }) : guidance ? tr(guidance) : '';
   el('hint').textContent = hint;
   el('hint').hidden = !hint;
 }
@@ -508,6 +550,8 @@ function render(redraw = true) {
   const built = defending()
     ? [...towers.map(({type, cell: id}) => ({type, id})), ...state.fences.map(({cell: id}) => ({type: 'fence', id}))]
     : orders.map(({type, cell: id}, index) => ({type, id, index}));
+  const preview = el('map-undo');
+  preview.replaceChildren();
   el('orders').hidden = built.length === 0;
   el('orders').replaceChildren(...built.map(row => {
     const li = document.createElement('li');
@@ -519,6 +563,17 @@ function render(redraw = true) {
     undo.textContent = tr(oldStructure ? 'demolish' : 'cancel');
     if (oldStructure) undo.title = tr('noRefund');
     undo.disabled = !editable;
+    const highlight = () => {
+      if (undo.disabled) return;
+      const [x, y] = coords(row.id);
+      const frame = `<rect x="${x * tile}" y="${y * tile}" width="${tile}" height="${tile}" rx="4"/>`;
+      preview.innerHTML = defending() ? frame : frame + sprite(row.type, ...point(row.id), 29);
+    };
+    const unhighlight = () => {
+      if (!undo.matches(':hover, :focus-visible')) preview.replaceChildren();
+    };
+    undo.onpointerenter = undo.onfocus = highlight;
+    undo.onpointerleave = undo.onblur = unhighlight;
     undo.onclick = () => {
       if (undo.disabled) return;
       move(defending() ? 'unbuild' : 'cancel', defending() ? row.id : row.index);
@@ -588,7 +643,8 @@ function animateWave(snapshot, previous, start, finish) {
       return type === 'pulse' ? 'rune' : type === 'mine' ? 'mine' : 'bolt';
     }));
     for (const cue of shotCues) sounds.play(cue, cue === 'rune' ? .23 : cue === 'bolt' ? .16 : 0);
-    if (frame.siege?.length) sounds.play('siege');
+    if (frame.siege?.some(hit => !hit.melee)) sounds.play('siege');
+    if (frame.siege?.some(hit => hit.melee)) sounds.play('hit', .22);
     if (before && frame.fences.length < before.fences.length) sounds.play('fence', .2);
     if (frame.hp < oldHp) {
       sounds.play('hit', .22);
@@ -626,8 +682,7 @@ async function archiveWave(wave, {reuse = false} = {}) {
   current.wave = wave;
   el('replayAgain').disabled = true;
   paintArchive();
-  errorNote = null;
-  paintError();
+  setGameError(null);
   try {
     const record = current.record ?? await Tower.request(`${replayApi(current.id)}/${wave}`, {auth: false});
     if (archive !== current || request !== current.request) return;
@@ -644,7 +699,7 @@ async function archiveWave(wave, {reuse = false} = {}) {
   } catch (error) {
     if (archive !== current || request !== current.request) return;
     el('replayAgain').disabled = false;
-    if (error.status === 404) errorNote = message('replayUnavailable'), paintError();
+    if (error.status === 404) setGameError(message('replayUnavailable'));
     else fail(error);
   }
 }
@@ -653,8 +708,7 @@ async function openArchive(id) {
   wipe();
   void sounds.unlock();
   const current = archive = {id, wave: 1, request: 0};
-  errorNote = null;
-  paintError();
+  setGameError(null);
   el('game').hidden = false;
   el('invite').hidden = true;
   el('game-cap').hidden = true;
@@ -723,8 +777,7 @@ async function move(type, target) {
   const wave = state.last + 1;
   sending = true;
   ++sequence;
-  errorNote = null;
-  paintError();
+  setGameError(null);
   render();
   try {
     const next = await call(room('moves'), {
@@ -749,8 +802,7 @@ async function swap(command) {
   if (sending || !state) return;
   sending = true;
   ++sequence;
-  errorNote = null;
-  paintError();
+  setGameError(null);
   render();
   try {
     accept(await call(room(command), {method: 'POST'}));
@@ -845,8 +897,7 @@ async function open(detail = {}) {
   sending = false;
   roomId = id;
   seatToken = detail.seatToken ?? Tower.seatOf(id) ?? null;
-  errorNote = null;
-  paintError();
+  setGameError(null);
   paintRoomControls();
   el('status').textContent = tr('loading');
   el('game').hidden = false;
@@ -896,8 +947,7 @@ function leave(message) {
   sending = false;
   wipe();
   el('game').hidden = true;
-  errorNote = null;
-  paintError();
+  setGameError(null);
   el('link').value = '';
   history.replaceState(null, '', location.pathname);
   window.dispatchEvent(new CustomEvent('tower:screen', { detail: {screen: 'lobby', message: message || null} }));
@@ -940,8 +990,7 @@ el('again').onclick = async () => {
   const id = roomId, batch = generation;
   sending = true;
   el('again').disabled = el('rematch').disabled = true;
-  errorNote = null;
-  paintError();
+  setGameError(null);
   try {
     const next = await Tower.createGuestRoom(seatToken);
     if (batch !== generation) return;

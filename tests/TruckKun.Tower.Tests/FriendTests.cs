@@ -35,6 +35,7 @@ public sealed class FriendTests {
             Unit.SetupGet(row => row.Friendships).Returns(Friendships.Object);
             Unit.SetupGet(row => row.Invites).Returns(Invites.Object);
             Unit.SetupGet(row => row.Rooms).Returns(Mock.Of<IRoomRepository>());
+            Invites.Setup(repo => repo.IncomingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
             Invites.Setup(repo => repo.PendingForAsync(It.IsAny<string>(), It.IsAny<Guid[]>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
             Unit.Setup(row => row.SaveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
@@ -53,7 +54,10 @@ public sealed class FriendTests {
         }
 
         public FriendService Friends => new(Unit.Object, Presence, Hub.Object);
-        public InviteService InviteService => new(Unit.Object, Rooms, Hub.Object, Presence);
+        public InviteService InviteService => new(Unit.Object, Rooms, Hub.Object, Presence,
+            new RoomService(Rooms, Unit.Object, Hub.Object,
+                Mock.Of<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<RoomService>.Instance));
 
         public User User(Guid id, string nickname) {
             var user = new User { Id = id, Nickname = nickname, NicknameKey = Nicknames.Normalize(nickname) };

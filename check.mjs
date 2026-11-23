@@ -353,7 +353,7 @@ const played = [];
     end = await act(id, A, wave, 'ready', -1);
     played.push(end);
     const nextDefender = await stateOf(id, B);
-    const budgets = [[12, 17], [14, 20], [16, 24], [18, 29]];
+    const budgets = [[12, 13], [14, 16], [16, 20], [18, 25]];
     assert.deepEqual([nextDefender.gold, end.gold], end.done ? [defenderView.gold, purchased.gold] : budgets[wave - 1]);
     defenderView = nextDefender;
     assert.ok(end.hp < before);

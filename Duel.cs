@@ -16,7 +16,7 @@ public sealed class Duel {
     const int StructureShotDamage = 4, KeepShotDamage = 1;
     const int RuneTargets = 3;
     static readonly int[] AttackerBonusPerSurvivor = [0, 1, 1, 2, 0];
-    static readonly int[] DefenderBudget = [11, 12, 14, 16, 18], AttackerBudget = [16, 17, 20, 24, 29];
+    static readonly int[] DefenderBudget = [11, 12, 14, 16, 18], AttackerBudget = [12, 13, 16, 20, 25];
     static readonly ImmutableDictionary<string, int[]> AttackRows = new Dictionary<string, int[]> {
         ["bolt"] = Zone(3), ["cannon"] = Zone(2), ["pulse"] = Zone(2), ["frost"] = Zone(1),
         ["ranged"] = Zone(2)
@@ -148,11 +148,13 @@ public sealed class Duel {
         seat.LastPoll = null;
     }
 
+    bool FirstWaveMissingMove => last == 0 && acted.Contains(false);
+
     internal bool ShouldRetire(DateTime now) {
         bool Gone(Seat seat) => !Watching(seat) && now - seat.LastSeen >= DisconnectGrace;
         if (Done) return now >= replayEndsAt && seats.OfType<Seat>().All(Gone);
         if (seats.OfType<Seat>().Any(Gone)) return true;
-        return Joined && deadline is { } end && now >= end && BothPresent(now) && acted.Contains(false);
+        return Joined && deadline is { } end && now >= end && BothPresent(now) && FirstWaveMissingMove;
     }
 
     static bool TokensMatch(string left, string right) =>
@@ -343,7 +345,7 @@ public sealed class Duel {
 
     // The clock runs the wave down for a player who stopped answering
     public bool CloseIfExpired() {
-        if (!Expired || !BothPresent(DateTime.UtcNow) || acted.Contains(false)) return false;
+        if (!Expired || !BothPresent(DateTime.UtcNow) || FirstWaveMissingMove) return false;
         ready[Defender] = true;
         ready[Attacker] = true;
         Resolve();
@@ -553,7 +555,8 @@ public sealed class Duel {
         "swarm" or "smart" => 7,
         "runner" or "balaclava" => StepScale,
         "giant" or "ranged" => 3 * StepScale,
-        "armored" or "apc" => 4 * StepScale,
+        "armored" => 5 * StepScale / 2,
+        "apc" => 4 * StepScale,
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
@@ -616,9 +619,9 @@ public sealed class Duel {
         .Select(t => new BuildingView(t.Type, t.Cell, t.Hp, t.Max)).ToImmutableArray();
 
     static (int Damage, int Every) Stats(string type) => type switch {
-        "bolt" => (4, 6),
+        "bolt" => (4, 4),
         "pulse" => (1, 3),
-        "cannon" => (13, 8),
+        "cannon" => (13, 6),
         "frost" => (0, 2),
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };

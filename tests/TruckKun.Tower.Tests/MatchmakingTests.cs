@@ -52,4 +52,30 @@ public sealed class MatchmakingTests {
         Assert.False(game.ShouldRetire(disconnected + Duel.DisconnectGrace / 2));
         Assert.True(game.ShouldRetire(disconnected + Duel.DisconnectGrace));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Later_waves_resolve_when_the_clock_expires_without_moves(bool defenderReady) {
+        var game = new Duel();
+        var host = new PlayerRef(Guid.NewGuid(), null);
+        var guest = new PlayerRef(Guid.NewGuid(), null);
+        Assert.True(game.TryTake(host, Duel.Defender, out _));
+        Assert.True(game.TryTake(guest, Duel.Attacker, out _));
+        Assert.True(game.Watch(host, "host"));
+        Assert.True(game.Watch(guest, "guest"));
+        Assert.Null(game.Apply(Duel.Defender, new(1, "ready", null)));
+        Assert.Null(game.Apply(Duel.Attacker, new(1, "ready", null)));
+        Assert.Equal(1, game.ResolvedWaves);
+        if (defenderReady) Assert.Null(game.Apply(Duel.Defender, new(2, "ready", null)));
+        var now = DateTime.UtcNow;
+        typeof(Duel).GetField("deadline", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(game, now.AddSeconds(-1));
+
+        Assert.False(game.ShouldRetire(now));
+        Assert.True(game.CloseIfExpired());
+        Assert.Equal(2, game.ResolvedWaves);
+        Assert.Null(game.TakeResult());
+        game.Unwatch("guest", now);
+        Assert.True(game.ShouldRetire(now + Duel.DisconnectGrace));
+    }
 }

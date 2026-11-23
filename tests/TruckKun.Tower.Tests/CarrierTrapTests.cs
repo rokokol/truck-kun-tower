@@ -199,7 +199,7 @@ public sealed class CarrierTrapTests {
         var stage = new Stage(Road);
         stage.Build("fence", Road[1]);
         stage.Build("spikes", Road[2]);
-        stage.Order("ranged");
+        stage.Order("ranged", fundOrder: true);
 
         var frames = stage.Play();
 
@@ -260,7 +260,13 @@ public sealed class CarrierTrapTests {
         }
 
         public void Build(string type, int cell) => Move(Duel.Defender, type, cell);
-        public void Order(string type) => Move(Duel.Attacker, type, Path[0]);
+        public void Order(string type, bool fundOrder = false) {
+            if (fundOrder) {
+                var view = JsonSerializer.SerializeToElement(duel.View(Duel.Attacker), Json);
+                Field<int[]>(duel, "gold")[Duel.Attacker] = view.GetProperty("prices").GetProperty(type).GetInt32();
+            }
+            Move(Duel.Attacker, type, Path[0]);
+        }
 
         public Frame[] Play() {
             Move(Duel.Defender, "ready", null);

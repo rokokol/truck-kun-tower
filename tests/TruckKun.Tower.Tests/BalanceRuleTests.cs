@@ -69,7 +69,7 @@ public sealed class BalanceRuleTests {
         board.Build("mine", Road[1]);
         board.Order("giant");
 
-        foreach (int budget in new[] { 19, 22, 28, 29 }) {
+        foreach (int budget in new[] { 15, 18, 24, 25 }) {
             board.Play();
             Assert.Equal(budget, board.Gold(Duel.Attacker));
         }
@@ -110,8 +110,10 @@ public sealed class BalanceRuleTests {
         Assert.All(frames[firstHit..(destroyed + 1)], frame =>
             Assert.Equal(road[2], frame.Mobs.Single(mob => mob.Id == 1).Cell));
         Assert.Contains(frames[(destroyed + 1)..], frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == road[4]));
-        var damagedFence = frames.SelectMany(frame => frame.Fences).First(fence => fence.Hp < fence.Max);
-        Assert.Equal(2, damagedFence.Max - damagedFence.Hp);
+        var firstFenceHits = frames.First(frame => frame.Siege.Any(hit => hit.Melee && hit.Cell == road[4]));
+        var damagedFence = Assert.Single(firstFenceHits.Fences);
+        Assert.Equal(2 * firstFenceHits.Siege.Count(hit => hit.Melee && hit.Cell == road[4]),
+            damagedFence.Max - damagedFence.Hp);
 
         foreach (int structure in new[] { tower, road[4] }) {
             var hits = Enumerable.Range(0, frames.Length)
@@ -120,12 +122,21 @@ public sealed class BalanceRuleTests {
             Assert.Equal(2, hits.Length);
             Assert.Equal(2, hits[1] - hits[0]);
         }
-        int firstMove = Array.FindIndex(frames, frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == road[1]));
-        Assert.Equal(4, firstMove);
+    }
+
+    [Fact]
+    public void Armored_slimes_move_two_cells_in_five_ticks_on_open_road() {
+        var board = Board.Open(Road);
+        board.Order("armored");
+        var frames = board.Play();
+        Assert.Equal(3, FirstTickAt(Road[1]));
+        Assert.Equal(5, FirstTickAt(Road[2]));
+
+        int FirstTickAt(int cell) => Array.FindIndex(frames, frame => frame.Mobs.Any(mob => mob.Id == 1 && mob.Cell == cell));
         var armored = JsonSerializer.SerializeToElement(Duel.Guide()).GetProperty("units").EnumerateArray()
             .Single(unit => unit.GetProperty("type").GetString() == "armored");
         Assert.Equal(2, armored.GetProperty("interval").GetInt32());
-        Assert.Equal(4, armored.GetProperty("stepTicks").GetInt32());
+        Assert.Equal(2.5m, armored.GetProperty("stepTicks").GetDecimal());
     }
 
     [Fact]
@@ -152,23 +163,23 @@ public sealed class BalanceRuleTests {
         Assert.DoesNotContain(shots, shot => shot.Cell == cannon);
     }
 
-    [Fact]
-    public void A_bolt_fires_more_often_than_a_cannon_but_less_than_every_other_tick() {
-        int bolt = ShotInterval("bolt"), cannon = ShotInterval("cannon");
-        Assert.True(bolt < cannon, $"bolt interval {bolt} must be shorter than cannon interval {cannon}");
-        Assert.True(bolt > 2, "the bolt is slower than one shot every other tick");
+    [Theory]
+    [InlineData("bolt", 4)]
+    [InlineData("cannon", 6)]
+    public void Towers_fire_at_the_expected_intervals(string type, int ticks) {
+        Assert.Equal(ticks, ShotInterval(type));
 
-        static int ShotInterval(string type) {
+        static int ShotInterval(string tower) {
             var board = Board.Open(Road);
             var site = board.Beside(Road[0]);
-            board.Build(type, site);
+            board.Build(tower, site);
             board.Build("fence", Road[1]);
             board.Order("giant");
-            var ticks = board.Play().Select((frame, tick) => (frame, tick))
+            var shots = board.Play().Select((frame, tick) => (frame, tick))
                 .Where(pair => pair.frame.Shots.Any(shot => shot.Cell == site))
                 .Select(pair => pair.tick).Take(2).ToArray();
-            Assert.Equal(2, ticks.Length);
-            return ticks[1] - ticks[0];
+            Assert.Equal(2, shots.Length);
+            return shots[1] - shots[0];
         }
     }
 
@@ -196,7 +207,7 @@ public sealed class BalanceRuleTests {
     [Fact]
     public void Unspent_gold_is_replaced_by_the_next_wave_budget() {
         var board = Board.Open(Road);
-        foreach (var (defender, attacker) in new[] { (12, 17), (14, 20), (16, 24), (18, 29) }) {
+        foreach (var (defender, attacker) in new[] { (12, 13), (14, 16), (16, 20), (18, 25) }) {
             board.Play();
             Assert.Equal(defender, board.Gold(Duel.Defender));
             Assert.Equal(attacker, board.Gold(Duel.Attacker));

@@ -35,7 +35,7 @@ public sealed class PlanningTests {
     }
 
     [Fact]
-    public void The_defender_starts_with_eleven_gold_in_a_new_match_and_in_a_rematch() {
+    public void Both_sides_get_the_first_wave_budget_in_a_new_match_and_in_a_rematch() {
         var game = OpenBoard();
         CheckGold();
         for (int wave = 1; wave <= 5; wave++) {
@@ -47,7 +47,7 @@ public sealed class PlanningTests {
 
         void CheckGold() {
             Assert.Equal(11, View(game, Duel.Defender).GetProperty("gold").GetInt32());
-            Assert.Equal(16, View(game, Duel.Attacker).GetProperty("gold").GetInt32());
+            Assert.Equal(12, View(game, Duel.Attacker).GetProperty("gold").GetInt32());
         }
     }
 

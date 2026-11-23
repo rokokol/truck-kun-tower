@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Xunit;
 
@@ -9,7 +10,7 @@ public sealed class RangedCombatTests {
         var duel = JoinedDuel();
         var path = LeftPath(duel);
         int keep = path[^1];
-        Buy(duel, Duel.Attacker, "ranged", path[0]);
+        OrderRanged(duel, path[0]);
         var frames = Fight(duel);
 
         var first = Assert.Single(Items(frames[0], "mobs"));
@@ -41,7 +42,7 @@ public sealed class RangedCombatTests {
         Buy(duel, Duel.Defender, "fence", path[1]);
         Buy(duel, Duel.Defender, "fence", path[2]);
         var planned = Items(View(duel, Duel.Defender), "fences");
-        Buy(duel, Duel.Attacker, "ranged", path[0]);
+        OrderRanged(duel, path[0]);
         var frames = Fight(duel);
 
         var firstId = Number(Assert.Single(Items(frames[0], "mobs")), "id");
@@ -75,7 +76,7 @@ public sealed class RangedCombatTests {
         var path = LeftPath(duel);
         int tower = path[0] + Maze.Width;
         Buy(duel, Duel.Defender, "frost", tower);
-        Buy(duel, Duel.Attacker, "ranged", path[0]);
+        OrderRanged(duel, path[0]);
         var frames = Fight(duel);
 
         int gone = Array.FindIndex(frames, frame => Items(frame, "buildings").Length == 0);
@@ -96,7 +97,7 @@ public sealed class RangedCombatTests {
         int gate = LeftPath(duel)[0];
         int tower = gate + Maze.Width;
         Buy(duel, Duel.Defender, "cannon", tower);
-        Buy(duel, Duel.Attacker, "ranged", gate);
+        OrderRanged(duel, gate);
         var frames = Fight(duel);
 
         var bolt = Assert.Single(Items(frames[0], "shots"));
@@ -166,6 +167,12 @@ public sealed class RangedCombatTests {
     static int[] LeftPath(Duel duel) => Items(View(duel), "paths")
         .Select(path => path.EnumerateArray().Select(cell => cell.GetInt32()).ToArray())
         .Single(path => path[0] % Maze.Width == 0);
+
+    static void OrderRanged(Duel duel, int cell) {
+        var purse = (int[])typeof(Duel).GetField("gold", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(duel)!;
+        purse[Duel.Attacker] = Number(View(duel).GetProperty("prices"), "ranged");
+        Buy(duel, Duel.Attacker, "ranged", cell);
+    }
 
     static void Buy(Duel duel, int side, string action, int cell, int wave = 1) =>
         Assert.Null(duel.Apply(side, new(wave, action, cell)));

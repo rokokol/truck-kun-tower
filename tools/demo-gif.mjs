@@ -41,11 +41,7 @@ const PACE = [0.5, 3];
 // The server caps a replay at 52 s, so anything past this is a hang and not a long wave
 const CAPTURE_SECONDS = 60;
 const READY_SECONDS = 20;
-// One order of every attacker type costs 53 gold, and a wave pays 16, 17, 20, 24 and 29 without
-// carrying the rest over, so no single wave can show all seven. The last wave holds the most, and
-// the demo buys what that gold covers from the cheapest type up, so the frame shows the widest
-// set one wave can pay for. The waves before it carry no order, and a wave with no order has no
-// frame, so they cost a request each
+// The last wave gives the demo the largest base budget. Cheap orders fit more types in one wave
 const ATTACK = ['swarm', 'giant', 'smart', 'runner', 'armored', 'ranged', 'apc'];
 import {fillDefence, LAST_WAVE} from './duel-setup.mjs';
 

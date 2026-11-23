@@ -74,8 +74,9 @@ try {
           {wave: 5, defender: 18, attacker: 29, bonusPerStructure: 0},
         ],
         units: [
-          {type: 'swarm', hpFirst: 3, hpLast: 7, damage: 1, fenceDamage: 1, radius: 0, interval: 0, stepTicks: 1.75},
-          {type: 'armored', hpFirst: 7, hpLast: 11, keepDamage: 1, fenceDamage: 2, radius: 1, interval: 2, stepTicks: 4},
+          {type: 'swarm', hpFirst: 3, hpLast: 7, keepDamage: 1, fenceDamage: 1, radius: 0, interval: 0, stepTicks: 1.75},
+          {type: 'armored', hpFirst: 7, hpLast: 11, keepDamage: 1, fenceDamage: 2, radius: 1, interval: 2, stepTicks: 2.5},
+          {type: 'apc', hpFirst: 47, hpLast: 59, radius: 0, interval: 0, stepTicks: 4},
         ],
         structures: [{type: 'pulse', hpFirst: 24, hpLast: 24, damage: 1, radius: 2, interval: 3, maxTargets: 3}],
       }});
@@ -208,11 +209,18 @@ try {
     const help = button('Справка');
     await help.click({timeout: 4000});
     const guide = page.getByRole('dialog', {name: 'Справка'});
-    await visible(guide.getByRole('row', {name: /Стайка.*3–7.*1.*0.*0.*1,75/}));
-    const armoredRule = guide.getByRole('row', {name: /^Бронированные/});
+    const units = guide.getByRole('list', {name: 'Юниты'});
+    const structures = guide.getByRole('list', {name: 'Постройки'});
+    const ruleCard = (list, name) => list.getByRole('listitem').filter({has: page.getByRole('heading', {name, exact: true})});
+    const swarmRule = ruleCard(units, 'Стайка');
+    const armoredRule = ruleCard(units, 'Бронированные');
+    const apcRule = ruleCard(units, 'Бронетранспортёр');
+    await visible(swarmRule);
+    assert.deepEqual(await swarmRule.locator('dd').allTextContents(), ['3–7', '0', '0', '1,75', '1 крепости / 1 забору']);
     assert.match(await armoredRule.innerText(), /2 забору и башне.*1 крепости.*не по диагонали.*продолжает путь/is);
-    assert.deepEqual((await armoredRule.getByRole('cell').allTextContents()).slice(-3), ['1', '2', '4']);
-    await visible(guide.getByRole('row', {name: /Руна.*24.*1.*3 целям.*2.*3/}));
+    assert.deepEqual((await armoredRule.locator('dd').allTextContents()).slice(1, 4), ['1', '2', '2,5']);
+    await visible(apcRule.getByText('Ломает забор и высаживает пассажиров'));
+    assert.match(await ruleCard(structures, 'Руна').innerText(), /24.*2.*3.*1.*3 целям/is);
     const budgets = guide.getByRole('table', {name: 'Монеты по волнам'});
     await visible(budgets.getByRole('columnheader', {name: 'Бонус за постройку'}));
     assert.deepEqual(await budgets.locator('tbody tr').evaluateAll(rows =>
@@ -222,17 +230,30 @@ try {
     await visible(guide.getByText(/Неистраченные монеты не переносятся/));
     await visible(guide.getByText(/Крепость не считается/));
     assert.ok(await guide.evaluate(node => node.getBoundingClientRect().width <= innerWidth && node.scrollWidth <= node.clientWidth));
-    const art = guide.locator('.guide-table:first-child svg');
-    await art.last().waitFor();
-    await page.waitForFunction(() => [...document.querySelectorAll('.guide-table:first-child svg')]
-      .every(svg => svg.getBBox().width > 0));
+    const statIcons = swarmRule.locator('dt svg');
+    assert.deepEqual(await statIcons.locator('use').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))),
+      ['heart', 'attack-radius', 'attack-interval', 'runner', 'hit-spark'].map(id => `actors.svg#${id}`));
+    await page.waitForFunction(() => [...document.querySelectorAll('.guide-card dt svg')]
+      .every(svg => svg.getBBox().width > 0 && svg.getAttribute('aria-hidden') === 'true'));
+    const art = units.locator('.guide-portrait svg');
     assert.deepEqual(await art.locator('use').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))),
-      ['heart', 'hit-spark', 'attack-radius', 'attack-interval', 'runner', 'swarm', 'armored'].map(id => `actors.svg#${id}`));
-    assert.ok(await guide.getByRole('rowheader', {name: 'Стайка'}).evaluate(cell => {
-      const photo = cell.querySelector('.guide-portrait').getBoundingClientRect();
-      const label = cell.querySelector('.guide-portrait').nextElementSibling.getBoundingClientRect();
-      return label.left >= photo.right && label.top < photo.bottom;
-    }), 'The label stays beside the photo on narrow screens');
+      ['swarm', 'armored', 'apc'].map(id => `actors.svg#${id}`));
+    for (const guideWidth of [706, width]) {
+      await page.setViewportSize({width: guideWidth, height: 900});
+      const layout = await units.getByRole('listitem').evaluateAll(cards => ({
+        columns: new Set(cards.map(card => card.getBoundingClientRect().left)).size,
+        overflow: cards.flatMap(card => {
+          const edge = card.getBoundingClientRect().right;
+          return [...card.querySelectorAll('h4, dt, dd')].filter(node => {
+            const text = document.createRange();
+            text.selectNodeContents(node);
+            return [...text.getClientRects()].some(line => line.right > edge + 1);
+          }).map(node => node.textContent);
+        }),
+      }));
+      assert.deepEqual(layout, {columns: guideWidth === 320 ? 1 : 2, overflow: []}, `Guide layout at ${guideWidth}px`);
+      assert.ok(await guide.evaluate(node => node.scrollWidth <= node.clientWidth));
+    }
     await shot('guide');
     await page.keyboard.press('Escape');
     assert.equal(await guide.isHidden(), true);
@@ -251,9 +272,10 @@ try {
     assert.equal((await scheme()).lang, 'en');
     await button('Guide').click();
     const englishGuide = page.getByRole('dialog', {name: 'Guide'});
-    await visible(englishGuide.getByRole('columnheader', {name: 'Ticks per tile'}));
-    await visible(englishGuide.getByRole('cell', {name: '1.75', exact: true}));
-    await visible(englishGuide.getByRole('row', {name: /Armored slimes.*not diagonally.*continue along the route/i}));
+    const englishUnits = englishGuide.getByRole('list', {name: 'Units'});
+    await visible(englishUnits.getByText('Ticks per tile', {exact: true}).first());
+    await visible(englishUnits.getByText('1.75', {exact: true}));
+    await visible(ruleCard(englishUnits, 'Armored slimes').getByText(/not diagonally.*continue along the route/i));
     await visible(englishGuide.getByText(/Fewer ticks per tile means faster movement/));
     const englishBudgets = englishGuide.getByRole('table', {name: 'Coins by wave'});
     await visible(englishBudgets.getByRole('row', {name: '4 16 24 +2'}));

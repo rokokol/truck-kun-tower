@@ -29,39 +29,51 @@
     return row.damage;
   }
 
-  function table(title, rows, showSpeed = false) {
-    const node = document.createElement('table');
-    node.className = 'guide-table';
-    node.append(element('caption', t(title)));
-    const head = node.createTHead().insertRow();
-    for (const [key, symbol] of [
-      ['guideName'], ['guideHp', 'heart'], ['guideDamage', 'hit-spark'],
-      ['guideRadius', 'attack-radius'], ['guideInterval', 'attack-interval'],
-      ...(showSpeed ? [['guideSpeed', 'runner']] : []),
-    ]) {
-      const label = element('span', t(key));
-      const column = Object.assign(document.createElement('th'), {scope: 'col'});
-      if (symbol) column.append(icon(symbol, 'guide-icon'));
-      column.append(label);
-      head.append(column);
-    }
-    const section = node.createTBody();
+  function stat(key, value, symbol) {
+    const group = document.createElement('div');
+    const label = document.createElement('dt');
+    label.append(icon(symbol, 'guide-stat-icon'), element('span', t(key)));
+    group.append(label, element('dd', value));
+    return group;
+  }
+
+  function cards(title, rows) {
+    const section = document.createElement('section');
+    section.className = 'guide-section';
+    const heading = element('h3', t(title));
+    heading.id = `rules-${title}`;
+    const list = document.createElement('ul');
+    list.className = 'guide-cards';
+    list.setAttribute('role', 'list');
+    list.setAttribute('aria-labelledby', heading.id);
     for (const row of rows) {
-      const line = section.insertRow();
-      const name = Object.assign(document.createElement('th'), {scope: 'row'});
-      const portrait = element('span', '');
+      const card = document.createElement('li');
+      card.className = 'guide-card';
+      const portrait = document.createElement('span');
       portrait.className = 'ddlc-snap guide-portrait';
       portrait.append(icon(row.type, 'guide-sprite'));
-      const entry = element('span', '');
-      entry.className = 'guide-entry';
-      entry.append(portrait, element('span', t(`action.${row.type}`)));
-      name.append(entry);
-      line.append(name);
+      const name = document.createElement('div');
+      name.className = 'guide-card-name';
+      name.append(portrait, element('h4', t(`action.${row.type}`)));
+
       const hp = row.hpFirst === row.hpLast ? row.hpFirst : `${row.hpFirst}–${row.hpLast}`;
-      for (const value of [hp, damage(row), row.radius, row.interval]) line.insertCell().textContent = value;
-      if (showSpeed) line.insertCell().textContent = row.stepTicks.toLocaleString(document.documentElement.lang);
+      const stats = document.createElement('dl');
+      stats.className = 'guide-card-stats';
+      stats.append(
+        stat('guideHp', hp, 'heart'),
+        stat('guideRadius', row.radius, 'attack-radius'),
+        stat('guideInterval', row.interval, 'attack-interval'),
+      );
+      if (row.stepTicks != null)
+        stats.append(stat('guideSpeed', row.stepTicks.toLocaleString(document.documentElement.lang), 'runner'));
+      const effect = stat('guideDamage', damage(row), 'hit-spark');
+      effect.className = 'guide-card-effect';
+      stats.append(effect);
+      card.append(name, stats);
+      list.append(card);
     }
-    return node;
+    section.append(heading, list);
+    return section;
   }
 
   function budgetTable(budgets) {
@@ -90,7 +102,7 @@
     notes.className = 'fine';
     const economy = element('p', t('guideEconomy'));
     economy.className = 'fine';
-    body.replaceChildren(table('guideUnits', rules.units, true), table('guideStructures', rules.structures), notes,
+    body.replaceChildren(cards('guideUnits', rules.units), cards('guideStructures', rules.structures), notes,
       budgetTable(rules.budgets), economy);
   }
 

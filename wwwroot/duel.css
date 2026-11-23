@@ -102,23 +102,35 @@ header .language [aria-pressed='true']:focus-visible { box-shadow: inset 0 0 0 1
 .guide-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .guide-table caption { text-align: start; font-weight: 800; margin-block: 12px 5px; }
 .guide-table :is(th, td) { padding: 5px 4px; border-bottom: 1px solid var(--ddlc-line); text-align: start; vertical-align: top; }
-.guide-table td:not(:nth-child(3)) { white-space: nowrap; }
-.guide-icon { display: block; width: 16px; height: 16px; margin-block-end: 4px; color: var(--ddlc-accent); }
-.guide-entry { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
+.guide-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.guide-section { margin-block: 16px; }
+.guide-section h3 { margin: 0 0 8px; font-size: 1rem; }
+.guide-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 10px; margin: 0; padding: 0; list-style: none;
+}
+.guide-card {
+  min-width: 0; padding: 10px 12px; border: 1px solid var(--ddlc-line);
+  background: var(--ddlc-ground); font-size: .875rem; overflow-wrap: anywhere;
+}
+.guide-card-name { display: flex; align-items: center; gap: 10px; }
+.guide-card-name h4 { margin: 0; font-size: 1rem; }
+.guide-card-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 8px 0 0; }
+.guide-card-stats dt { display: flex; align-items: center; gap: 4px; color: var(--ddlc-muted); font-size: .75rem; }
+.guide-stat-icon { flex: none; width: 14px; height: 14px; color: var(--ddlc-accent); }
+.guide-card-stats dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.guide-card-effect { grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid var(--ddlc-line); }
+.guide-card-effect dd { font-weight: 400; }
 .ddlc-snap.guide-portrait {
-  display: grid; place-items: center; width: 38px; height: 36px; margin: 5px 0;
+  display: grid; place-items: center; flex: none; width: 38px; height: 36px; margin: 5px 0;
   padding: 1px 3px 4px; border-width: 1px; box-shadow: 2px 2px 0 var(--ddlc-board-drop);
 }
 .guide-portrait::before { top: -4px; width: 55%; height: 7px; }
 .guide-sprite { display: block; width: 28px; height: 28px; }
 @media (max-width: 480px) {
   #guide { padding: 10px; }
-  .guide-table { font-size: .75rem; }
-  .guide-table { overflow-wrap: anywhere; }
+  .guide-table { font-size: .75rem; overflow-wrap: anywhere; }
   .guide-table :is(th, td) { padding-inline: 3px; }
-  .guide-entry { gap: 4px; }
-  .ddlc-snap.guide-portrait { width: 25px; height: 26px; padding: 1px 2px 3px; }
-  .guide-sprite { width: 20px; height: 20px; }
 }
 
 /* buttons: paper, then one loud action per screen */

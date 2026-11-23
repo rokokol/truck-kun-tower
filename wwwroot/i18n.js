@@ -16,7 +16,6 @@ const i18n = (() => {
     guideWave: ['Волна', 'Wave'],
     guideStructureBonus: ['Бонус за постройку', 'Bonus per structure'],
     guideEconomy: ['В начале волны обе стороны получают базовый бюджет из таблицы. Неистраченные монеты не переносятся. Бонус получает только атакующий: за каждую башню, забор и ловушку, которые остались после предыдущего боя. Крепость не считается. Отмена заказа или снос постройки, купленной в текущей волне, возвращает монеты. За снос старых построек монеты не возвращаются', 'Both sides get the base budget in the table at the start of each wave. Unspent coins do not carry over. Only the attacker gets a bonus for each tower, fence, and trap that survived the previous battle. The keep does not count. Cancel an order or remove a structure bought this wave to get its coins back. Old structures give no refund'],
-    guideName: ['Название', 'Name'],
     guideHp: ['HP', 'HP'],
     guideDamage: ['Урон', 'Damage'],
     guideRadius: ['Радиус, кл.', 'Range, tiles'],

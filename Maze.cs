@@ -1,4 +1,4 @@
-internal sealed class Maze {
+internal sealed partial class Maze {
     public const int Width = 15, Height = 11;
     const int Keep = 5 * Width + 7;
     static readonly (int X, int Y)[] Directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
@@ -7,15 +7,18 @@ internal sealed class Maze {
     public Dictionary<int, int[][]> RouteOptions { get; }
     public int[] FenceCells { get; }
 
-    public Maze() {
+    public Maze() : this(Random.Shared) { }
+
+    internal Maze(Random random) {
         while (true) {
-            var routes = GenerateRoutes();
+            var routes = GenerateRoutes(random);
             var paths = routes.Values.ToArray();
             int[] users = new int[Width * Height];
             for (int gate = 0; gate < paths.Length; gate++)
                 foreach (int cell in paths[gate]) users[cell] |= 1 << gate;
             if (!paths.All(path => IsWinding(path, users))) continue;
-            if (AddDetours(paths, users) is not {} alternates) continue;
+            if (AddDetours(paths, users, random) is not {} alternates) continue;
+            alternates = WideDetours(paths, users, random) ?? alternates;
 
             Routes = routes;
             RouteOptions = alternates.ToDictionary(options => options[0][0]);
@@ -23,6 +26,13 @@ internal sealed class Maze {
             FenceCells = corridor.Where(CanFence).Order().ToArray();
             break;
         }
+    }
+
+    internal Maze(int[][][] routes) {
+        Routes = routes.ToDictionary(options => options[0][0], options => options[0]);
+        RouteOptions = routes.ToDictionary(options => options[0][0]);
+        corridor = routes.SelectMany(options => options).SelectMany(path => path).ToHashSet();
+        FenceCells = corridor.Where(CanFence).Order().ToArray();
     }
 
     internal static int[] PickRoute(int[][] options, Func<double> roll) {
@@ -58,7 +68,7 @@ internal sealed class Maze {
 
     readonly record struct Detour(int Start, int Gates, int[] Interior);
 
-    static int[][][]? AddDetours(int[][] paths, int[] users) {
+    static int[][][]? AddDetours(int[][] paths, int[] users, Random random) {
         List<Detour> choices = [];
         HashSet<int> seen = [];
         foreach (var path in paths)
@@ -84,7 +94,7 @@ internal sealed class Maze {
             }
 
         var shuffled = choices.ToArray();
-        Random.Shared.Shuffle(shuffled);
+        random.Shuffle(shuffled);
         var occupied = new HashSet<int>();
         var selected = new List<Detour>();
         if (!Cover((1 << paths.Length) - 1)) return null;
@@ -120,7 +130,7 @@ internal sealed class Maze {
         }
     }
 
-    static Dictionary<int, int[]> GenerateRoutes() {
+    static Dictionary<int, int[]> GenerateRoutes(Random random) {
         Dictionary<int, int[]> routes = new();
         int[] parent = new int[Width * Height];
         Array.Fill(parent, -1);
@@ -129,7 +139,7 @@ internal sealed class Maze {
         List<(int From, int To)> frontier = [];
         AddFrontier(Keep);
         while (frontier.Count > 0) {
-            int index = Random.Shared.Next(4) == 0 ? frontier.Count - 1 : Random.Shared.Next(frontier.Count);
+            int index = random.Next(4) == 0 ? frontier.Count - 1 : random.Next(frontier.Count);
             var (from, to) = frontier[index];
             frontier.RemoveAt(index);
             if (parent[to] != -1) continue;
@@ -140,12 +150,12 @@ internal sealed class Maze {
             AddFrontier(to);
         }
 
-        int leftY = Random.Shared.Next(2) == 0 ? 3 : 7;
+        int leftY = random.Next(2) == 0 ? 3 : 7;
         int[] gateColumns = [3, 5, 9, 11];
         AddRoute(leftY * Width, leftY * Width + 1);
-        int top = gateColumns[Random.Shared.Next(gateColumns.Length)];
+        int top = gateColumns[random.Next(gateColumns.Length)];
         AddRoute(top, top + Width);
-        int bottom = (Height - 1) * Width + gateColumns[Random.Shared.Next(gateColumns.Length)];
+        int bottom = (Height - 1) * Width + gateColumns[random.Next(gateColumns.Length)];
         AddRoute(bottom, bottom - Width);
         return routes;
 

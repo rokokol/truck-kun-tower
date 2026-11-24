@@ -28,6 +28,7 @@ builder.Services.AddScoped<InviteService>();
 builder.Services.AddScoped<RoomService>();
 builder.Services.AddScoped<MatchService>();
 builder.Services.AddHostedService<WaveClock>();
+builder.Services.AddHostedService<BotRunner>();
 builder.Services.AddDbContext<DuelDb>(options => options.UseNpgsql(connection));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();

@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../truck-kun-tower.csproj" />
+    <ProjectReference Include="../../tools/Trainer/TruckKun.Tower.Trainer.csproj" />
   </ItemGroup>
 
 </Project>

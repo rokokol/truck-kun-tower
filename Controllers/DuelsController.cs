@@ -15,7 +15,8 @@ public sealed class DuelsController(RoomService rooms) : ControllerBase {
         CancellationToken cancellationToken) {
         var side = Sides.Parse(request?.Side) ?? Sides.Defender;
         var session = await rooms.CreateAsync(HttpContext.Player(), side, cancellationToken,
-            randomOpponent: request?.RandomOpponent ?? false);
+            randomOpponent: request?.RandomOpponent ?? false,
+            practice: request?.Practice ?? false);
         return Created($"/api/duels/{session.Id}", session);
     }
 

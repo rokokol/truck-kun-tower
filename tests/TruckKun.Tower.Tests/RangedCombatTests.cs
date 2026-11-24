@@ -10,7 +10,7 @@ public sealed class RangedCombatTests {
         var duel = JoinedDuel();
         var path = LeftPath(duel);
         int keep = path[^1];
-        OrderRanged(duel, path[0]);
+        FundAndOrder(duel, path[0]);
         var frames = Fight(duel);
 
         var first = Assert.Single(Items(frames[0], "mobs"));
@@ -42,7 +42,7 @@ public sealed class RangedCombatTests {
         Buy(duel, Duel.Defender, "fence", path[1]);
         Buy(duel, Duel.Defender, "fence", path[2]);
         var planned = Items(View(duel, Duel.Defender), "fences");
-        OrderRanged(duel, path[0]);
+        FundAndOrder(duel, path[0]);
         var frames = Fight(duel);
 
         var firstId = Number(Assert.Single(Items(frames[0], "mobs")), "id");
@@ -76,7 +76,7 @@ public sealed class RangedCombatTests {
         var path = LeftPath(duel);
         int tower = path[0] + Maze.Width;
         Buy(duel, Duel.Defender, "frost", tower);
-        OrderRanged(duel, path[0]);
+        FundAndOrder(duel, path[0]);
         var frames = Fight(duel);
 
         int gone = Array.FindIndex(frames, frame => Items(frame, "buildings").Length == 0);
@@ -97,7 +97,7 @@ public sealed class RangedCombatTests {
         int gate = LeftPath(duel)[0];
         int tower = gate + Maze.Width;
         Buy(duel, Duel.Defender, "cannon", tower);
-        OrderRanged(duel, gate);
+        FundAndOrder(duel, gate);
         var frames = Fight(duel);
 
         var bolt = Assert.Single(Items(frames[0], "shots"));
@@ -131,7 +131,7 @@ public sealed class RangedCombatTests {
     [Fact]
     public void Replay_mob_metadata_distinguishes_the_carrier_and_its_passengers() {
         var duel = JoinedDuel();
-        Buy(duel, Duel.Attacker, "apc", LeftPath(duel)[0]);
+        FundAndOrder(duel, LeftPath(duel)[0], "apc");
         var frames = Fight(duel);
 
         var carrier = Assert.Single(Items(frames[0], "mobs"));
@@ -168,10 +168,10 @@ public sealed class RangedCombatTests {
         .Select(path => path.EnumerateArray().Select(cell => cell.GetInt32()).ToArray())
         .Single(path => path[0] % Maze.Width == 0);
 
-    static void OrderRanged(Duel duel, int cell) {
+    static void FundAndOrder(Duel duel, int cell, string type = "ranged") {
         var purse = (int[])typeof(Duel).GetField("gold", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(duel)!;
-        purse[Duel.Attacker] = Number(View(duel).GetProperty("prices"), "ranged");
-        Buy(duel, Duel.Attacker, "ranged", cell);
+        purse[Duel.Attacker] = Number(View(duel).GetProperty("prices"), type);
+        Buy(duel, Duel.Attacker, type, cell);
     }
 
     static void Buy(Duel duel, int side, string action, int cell, int wave = 1) =>

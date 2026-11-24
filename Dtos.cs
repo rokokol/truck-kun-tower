@@ -21,18 +21,18 @@ public record InviteDto(Guid Id, UserBrief From, string RoomId, DateTime Created
 public record InviteCreate(Guid? FriendId, string? RoomId);
 public record InviteAccepted(string RoomId);
 
-public record CreateDuelRequest(string? Side, bool RandomOpponent = false);
+public record CreateDuelRequest(string? Side, bool RandomOpponent = false, bool Practice = false);
 public record JoinDuelRequest(string? Side);
 public record RoomDto(string Id, string MySide, UserBrief? Opponent, string Status,
-    DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt, Guid? ReplayId = null);
+    DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt, Guid? ReplayId = null, bool Practice = false);
 public record DuelSession(string Id, string Side, string? SeatToken, RoomDto Room);
 public record SideRequest(string? Side);
 
 public record MatchDto(Guid Id, string RoomId, string Winner, int HeartsLeft, int WavesPlayed,
-    string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker, bool HasReplay);
+    string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker, bool HasReplay, bool Practice = false);
 public record MatchDetailDto(Guid Id, string RoomId, string Winner, int HeartsLeft, int WavesPlayed,
     string Note, DateTime StartedAt, DateTime FinishedAt, UserBrief? Defender, UserBrief? Attacker,
-    List<WaveDto> Waves);
+    List<WaveDto> Waves, bool Practice = false);
 public record WaveDto(int Number, int HeartsAfter, int Damage, int Slimes, int SlimesKilled, int Groups);
 public record NoteRequest(string? Note);
 public record StatsDto(int Matches, List<SideWins> Sides, double AverageWaves, double AverageHeartsLeft,
@@ -41,7 +41,7 @@ public record LeaderDto(Guid Id, string Nickname, int Played, int Wins);
 
 // A move keeps its cell strict: a boolean or a string here used to slip through as "the first cell"
 public record Move(int Wave, string? Action,
-    [property: System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)] int? Cell);
+    [property: System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)] int? Cell, Guid? MatchId = null);
 
 // Sides travel as words: the client should not have to know that the defender is zero
 public static class Sides {

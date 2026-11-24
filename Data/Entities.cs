@@ -66,6 +66,7 @@ public sealed class MatchRow {
     public int HeartsLeft { get; set; }
     public string Winner { get; set; } = "";
     public bool Survivor { get; set; }
+    public bool Practice { get; set; }
     // A participant's own label for the series: "реванш", "финал", whatever
     public string Note { get; set; } = "";
     public string? ReplayMapJson { get; set; }

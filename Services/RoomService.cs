@@ -12,19 +12,23 @@ public sealed class RoomService(
     // The browser redraws on this event; renaming it would be a client change too
     const string ChangedEvent = "Changed";
 
-    public Task<DuelSession> CreateAsync(PlayerRef who, int side, CancellationToken token = default, bool randomOpponent = false) =>
-        WithMembership(() => CreateCoreAsync(who, side, token, randomOpponent), token);
+    public Task<DuelSession> CreateAsync(PlayerRef who, int side, CancellationToken token = default,
+        bool randomOpponent = false, bool practice = false) =>
+        WithMembership(() => CreateCoreAsync(who, side, token, randomOpponent, practice), token);
 
-    async Task<DuelSession> CreateCoreAsync(PlayerRef who, int side, CancellationToken token, bool randomOpponent) {
+    async Task<DuelSession> CreateCoreAsync(PlayerRef who, int side, CancellationToken token,
+        bool randomOpponent, bool practice) {
         if (randomOpponent && who.IsGuest) throw AppError.Unauthorized("Нужен вход");
         rooms.RequireAvailable(who);
+        if (practice) rooms.RequireSoloCapacity();
         var id = Rooms.NewId();
         var game = new Duel { RandomOpponent = randomOpponent };
         if (!game.TryTake(who, side, out var seat)) throw AppError.Conflict("Не удалось занять это место");
+        if (practice) game.SeatBot(1 - side);
         if (!rooms.Add(id, game)) throw AppError.Conflict("Комната не открылась, попробуйте ещё раз");
 
         Room? row = null;
-        if (who.UserId is Guid owner) {
+        if (!practice && who.UserId is Guid owner) {
             row = new Room {
                 Id = id,
                 OwnerId = owner,
@@ -37,8 +41,9 @@ public sealed class RoomService(
             try { await unit.SaveAsync(token); }
             catch { rooms.Remove(id, out _); throw; }
         } else {
-            // A guest room is a link and a board: nothing to remember once the tab is closed
-            log.LogDebug("Room {Room} is a guest room and stays out of the database", id);
+            // A guest room is a link and a board; a practice board has no row to rank or list
+            log.LogDebug("Room {Room} is a {Kind} and stays out of the database", id,
+                practice ? "practice room" : "guest room");
         }
 
         var opponent = await BriefAsync(game.UserAt(1 - side), token);
@@ -102,9 +107,14 @@ public sealed class RoomService(
     public async Task<RoomDto> RoomAsync(PlayerRef who, string id, CancellationToken token = default) {
         var game = Require(id);
         int seat;
-        lock (game) seat = SeatOrThrow(game, who);
-        var row = await unit.Rooms.ByIdAsync(id, token);
-        var opponent = await BriefAsync(game.UserAt(1 - seat), token);
+        bool solo;
+        lock (game) {
+            seat = SeatOrThrow(game, who);
+            solo = game.Solo;
+        }
+        // A practice board has no row, so the live board supplies every field
+        Room? row = solo ? null : await unit.Rooms.ByIdAsync(id, token);
+        UserBrief? opponent = solo ? null : await BriefAsync(game.UserAt(1 - seat), token);
         return Card(id, row, seat, opponent, game);
     }
 
@@ -114,6 +124,14 @@ public sealed class RoomService(
 
     async Task<object> MoveCoreAsync(PlayerRef who, string id, Move move, CancellationToken token) {
         var game = Require(id);
+        if (move.Action == "rematch") {
+            bool needsSlot;
+            lock (game) {
+                SeatOrThrow(game, who);
+                needsSlot = game.Solo && game.Done;
+            }
+            if (needsSlot) rooms.RequireSoloCapacity();
+        }
         int seat;
         IResult? refused;
         Duel.ResultWrite? finished;
@@ -121,6 +139,8 @@ public sealed class RoomService(
         lock (game) {
             seat = SeatOrThrow(game, who);
             if (rooms.Get(id) != game) throw AppError.NotFound("Комната не найдена");
+            if (move.MatchId is Guid expected && game.MatchId != expected)
+                throw AppError.Conflict("Доска уже изменилась");
             if (move.Action == "rematch" && game.Done) {
                 foreach (var side in new[] {Duel.Defender, Duel.Attacker}) {
                     if (game.SeatAt(side) is { } chair)
@@ -129,7 +149,7 @@ public sealed class RoomService(
             }
             int previous = game.ResolvedWaves;
             refused = game.Apply(seat, move);
-            publicChange = game.ResolvedWaves != previous;
+            publicChange = game.ResolvedWaves != previous || (refused is null && move.Action == "rematch");
             // A rematch clears the board without a result, so the result is asked for either way
             finished = game.TakeResult();
         }
@@ -167,16 +187,21 @@ public sealed class RoomService(
 
     internal async Task<bool> CancelCoreAsync(PlayerRef who, string id) {
         var game = Require(id);
+        bool solo;
         lock (game) {
             SeatOrThrow(game, who);
+            solo = game.Solo;
             rooms.Close(id, game, RoomStatus.Cancelled);
         }
 
-        var row = await unit.Rooms.ByIdAsync(id);
-        if (row is not null && !game.Done) {
-            row.Status = RoomStatus.Cancelled;
-            row.FinishedAt = DateTime.UtcNow;
-            await unit.SaveAsync();
+        // A practice board has no row to mark cancelled
+        if (!solo) {
+            var row = await unit.Rooms.ByIdAsync(id);
+            if (row is not null && !game.Done) {
+                row.Status = RoomStatus.Cancelled;
+                row.FinishedAt = DateTime.UtcNow;
+                await unit.SaveAsync();
+            }
         }
         await AnnounceAsync(id, CancellationToken.None);
         return true;
@@ -184,7 +209,22 @@ public sealed class RoomService(
 
     // "My duels" outlives the boards: a live one answers with its own status, the rest with the row's
     public async Task<List<RoomDto>> MineAsync(Guid me, CancellationToken token = default, int take = 20, int skip = 0) {
-        var rows = await unit.Rooms.ForUserAsync(me, Math.Clamp(take, 1, 50), token, Math.Max(0, skip));
+        RoomDto? practice = null;
+        foreach (var (id, game) in rooms.All) {
+            lock (game) {
+                if (!game.Solo || game.Done || rooms.Get(id) != game) continue;
+                int seat = game.SeatOf(new(me, null));
+                if (seat < 0) continue;
+                practice = Card(id, null, seat, null, game);
+                break;
+            }
+        }
+        take = Math.Clamp(take, 1, 50);
+        skip = Math.Max(0, skip);
+        bool includePractice = practice is not null && skip == 0;
+        int databaseTake = take - (includePractice ? 1 : 0);
+        if (databaseTake == 0) return [practice!];
+        var rows = await unit.Rooms.ForUserAsync(me, databaseTake, token, Math.Max(0, skip - (practice is null ? 0 : 1)));
         var rivals = rows.Select(row => RivalOf(row, me)).OfType<Guid>().Distinct().ToList();
         var names = rivals.Count == 0
             ? new Dictionary<Guid, string>()
@@ -198,7 +238,7 @@ public sealed class RoomService(
         var replays = closed.Length == 0 ? new Dictionary<string, Guid?>()
             : await unit.Matches.LatestReplayIdsAsync(me, closed, token);
 
-        return entries.Select(entry => {
+        var cards = entries.Select(entry => {
             var (row, status) = entry;
             var side = row.DefenderId == me ? Duel.Defender : row.AttackerId == me ? Duel.Attacker : -1;
             var rival = RivalOf(row, me);
@@ -206,12 +246,16 @@ public sealed class RoomService(
                 rival is Guid id ? new UserBrief(id, names.GetValueOrDefault(id, "")) : null,
                 status.ToString(), row.CreatedAt, row.StartedAt, row.FinishedAt, replays.GetValueOrDefault(row.Id));
         }).ToList();
+        if (includePractice) cards.Insert(0, practice!);
+        return cards;
     }
 
     // The row follows the board: a guest owns no column, and a full pair means the game is on
     static Guid[] PlayersIn(Duel game) => new[] {game.UserAt(Duel.Defender), game.UserAt(Duel.Attacker)}.OfType<Guid>().ToArray();
 
     async Task<Room?> FollowAsync(string id, Duel game, PlayerRef who, Guid[]? started, CancellationToken token) {
+        // A practice board has no row, so a reload cannot create one
+        lock (game) if (game.Solo) return null;
         var row = await unit.Rooms.ByIdAsync(id, token);
         if (row is null) {
             if (who.UserId is not Guid owner) return null;
@@ -237,6 +281,8 @@ public sealed class RoomService(
 
     // A swap moves the accounts between the columns, so the row keeps saying who sits where
     async Task SyncSidesAsync(string id, Duel game, CancellationToken token) {
+        // A bot cannot swap sides, and its board has no row to update
+        lock (game) if (game.Solo) return;
         var row = await unit.Rooms.ByIdAsync(id, token);
         if (row is null) return;
         lock (game) {
@@ -252,10 +298,17 @@ public sealed class RoomService(
         // The nickname comes from the database, so it is read outside the lock; a swap in that
         // window only labels the names of a board nobody else can see yet
         var opponent = await BriefAsync(game.UserAt(1 - seat), token);
-        lock (game) {
-            seat = SeatOrThrow(game, who);
-            if (poll) game.Poll(seat, DateTime.UtcNow);
-            return game.View(seat, opponent?.Nickname);
+        while (true) {
+            Task<bool>? saving;
+            lock (game) {
+                seat = SeatOrThrow(game, who);
+                saving = game.PracticeArchive;
+                if (saving is null || saving.IsCompleted) {
+                    if (poll) game.Poll(seat, DateTime.UtcNow);
+                    return game.View(seat, opponent?.Nickname);
+                }
+            }
+            await saving.WaitAsync(token);
         }
     }
 
@@ -266,7 +319,7 @@ public sealed class RoomService(
     static RoomDto Card(string id, Room? row, int seat, UserBrief? opponent, Duel game) =>
         new(id, seat < 0 ? "" : Sides.Name(seat), opponent,
             StatusOf(game).ToString(),
-            row?.CreatedAt ?? DateTime.UtcNow, row?.StartedAt, row?.FinishedAt);
+            row?.CreatedAt ?? DateTime.UtcNow, row?.StartedAt, row?.FinishedAt, Practice: game.Solo);
 
     async Task<UserBrief?> BriefAsync(Guid? userId, CancellationToken token) {
         if (userId is not Guid id) return null;

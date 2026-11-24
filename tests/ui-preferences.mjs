@@ -28,8 +28,8 @@ const opponent = { id: 'u2', nickname: 'Руна <guest>' };
 const duel = { id: 'fixture', mySide: 'attacker', status: 'playing', opponent };
 const board = {
   matchId: 'm1', seat: 1, gold: 20, done: false, hp: 12, joined: true, locked: false,
-  last: 0, orders: [{ type: 'giant', cell: 3 }], towers: [], fences: [], frames: [], secondsLeft: 30,
-  opponent: opponent.nickname, width: 5, height: 3, paths: [[3, 8, 13]],
+  last: 0, orders: [{ type: 'giant', cell: 3, count: 1 }], towers: [], fences: [], frames: [], waveHistory: [], secondsLeft: 30,
+  opponent: opponent.nickname, width: 5, height: 3, paths: [[3, 8, 13], [0, 5, 10, 11, 12, 13]],
   alternatePaths: [[3, 4, 9, 14, 13]], fenceCells: [],
   prices: { swarm: 1, giant: 2, smart: 3, runner: 4, armored: 5, decoy: 6, ranged: 7, apc: 8 },
 };
@@ -74,11 +74,12 @@ try {
           {wave: 5, defender: 18, attacker: 29, bonusPerStructure: 0},
         ],
         units: [
-          {type: 'swarm', hpFirst: 3, hpLast: 7, keepDamage: 1, fenceDamage: 1, radius: 0, interval: 0, stepTicks: 1.75},
+          {type: 'swarm', hpFirst: 3, hpLast: 7, keepDamage: 1, fenceDamage: 1, radius: 0, interval: 0, stepTicks: 1.75, price: 4, count: 5},
           {type: 'armored', hpFirst: 7, hpLast: 11, keepDamage: 1, fenceDamage: 2, radius: 1, interval: 2, stepTicks: 2.5},
-          {type: 'apc', hpFirst: 47, hpLast: 59, radius: 0, interval: 0, stepTicks: 4},
+          {type: 'apc', hpFirst: 47, hpLast: 59, radius: 0, interval: 0, stepTicks: 4, price: 13, count: 1},
+          {type: 'balaclava', hpFirst: 4, hpLast: 8, radius: 0, interval: 0, stepTicks: 1, price: null, count: 5},
         ],
-        structures: [{type: 'pulse', hpFirst: 24, hpLast: 24, damage: 1, radius: 2, interval: 3, maxTargets: 3}],
+        structures: [{type: 'pulse', hpFirst: 24, hpLast: 24, damage: 1, radius: 2, interval: 3, maxTargets: 3, price: 6}],
       }});
       const fixtures = {
         'POST /api/auth/register': { token: 'fixture-account', user },
@@ -135,14 +136,31 @@ try {
         json: { status: 404, detail: 'Пользователь не найден' } });
       if (key === 'POST /api/duels/fixture/moves') {
         const move = request.postDataJSON();
+        if (move.action === 'rematch') {
+          assert.equal(current.done, true);
+          current = { ...board, matchId: 'm2' };
+          return route.fulfill({ json: current });
+        }
         if (move.action === 'ready') {
           if (move.cell !== null || current.orders.length !== 0) errors.push(`Invalid skip: ${JSON.stringify(move)}`);
           current = { ...current, locked: true };
           return route.fulfill({ json: current });
         }
+        if (move.action === 'cancel') {
+          assert.deepEqual(move, {wave: 1, action: 'cancel', cell: 0});
+          current = {...current, gold: current.gold + current.prices.giant, orders: current.orders.slice(1)};
+          return route.fulfill({json: current});
+        }
         if (current.seat === 0) {
+          if (move.action === 'unbuild') {
+            assert.deepEqual(move, {wave: 1, action: 'unbuild', cell: 9});
+            current = {...current, gold: current.gold + current.prices.mine, trapCells: [9],
+              refundableCells: [], towers: current.towers.filter(tower => tower.cell !== 9)};
+            return route.fulfill({json: current});
+          }
           if (move.wave !== 1 || move.action !== 'mine' || move.cell !== 9) errors.push(JSON.stringify(move));
-          current = { ...current, trapCells: [], towers: [...current.towers, { type: 'mine', cell: 9, hp: 1, max: 1 }] };
+          current = { ...current, gold: current.gold - current.prices.mine, trapCells: [], refundableCells: [9],
+            towers: [...current.towers, { type: 'mine', cell: 9, hp: 1, max: 1 }] };
           return route.fulfill({ json: current });
         }
         if (move.wave !== 1 || move.action !== 'smart' || move.cell !== 3) errors.push(JSON.stringify(move));
@@ -150,7 +168,7 @@ try {
           json: { status: 409, detail: 'Этот ход недоступен' } });
         if (moves === 2) return route.fulfill({ status: 409, contentType: 'application/problem+json',
           body: JSON.stringify({ status: 409, code: 'purchase_limit', detail: 'Достигнут лимит покупок этого типа' }) });
-        current = { ...current, gold: 17, orders: [...current.orders, { type: 'smart', cell: 3 }] };
+        current = { ...current, gold: 17, orders: [...current.orders, { type: 'smart', cell: 3, count: 5 }] };
         return route.fulfill({ json: current });
       }
       if (key === 'GET /api/duels' || key === 'GET /api/matches/mine') {
@@ -216,11 +234,19 @@ try {
     const armoredRule = ruleCard(units, 'Бронированные');
     const apcRule = ruleCard(units, 'Бронетранспортёр');
     await visible(swarmRule);
-    assert.deepEqual(await swarmRule.locator('dd').allTextContents(), ['3–7', '0', '0', '1,75', '1 крепости / 1 забору']);
+    assert.deepEqual(await swarmRule.locator('dd').allTextContents(), ['3–7', '0', '0', '1,75', '4', '5', '1 крепости / 1 забору']);
     assert.match(await armoredRule.innerText(), /2 забору и башне.*1 крепости.*не по диагонали.*продолжает путь/is);
     assert.deepEqual((await armoredRule.locator('dd').allTextContents()).slice(1, 4), ['1', '2', '2,5']);
     await visible(apcRule.getByText('Ломает забор и высаживает пассажиров'));
-    assert.match(await ruleCard(structures, 'Руна').innerText(), /24.*2.*3.*1.*3 целям/is);
+    const statValue = (card, label) => card.locator('dl > div').filter({has: page.getByText(label, {exact: true})}).locator('dd');
+    assert.equal(await statValue(apcRule, 'Цена').textContent(), '13');
+    assert.equal(await statValue(apcRule, 'Юнитов').textContent(), '1');
+    const passengers = ruleCard(units, 'Пассажир БТР');
+    assert.equal(await statValue(passengers, 'Цена').textContent(), '—');
+    assert.equal(await statValue(passengers, 'Юнитов').textContent(), '5');
+    const rune = ruleCard(structures, 'Руна');
+    assert.match(await rune.innerText(), /24.*2.*3.*1.*3 целям/is);
+    assert.equal(await statValue(rune, 'Цена').textContent(), '6');
     const budgets = guide.getByRole('table', {name: 'Монеты по волнам'});
     await visible(budgets.getByRole('columnheader', {name: 'Бонус за постройку'}));
     assert.deepEqual(await budgets.locator('tbody tr').evaluateAll(rows =>
@@ -232,12 +258,12 @@ try {
     assert.ok(await guide.evaluate(node => node.getBoundingClientRect().width <= innerWidth && node.scrollWidth <= node.clientWidth));
     const statIcons = swarmRule.locator('dt svg');
     assert.deepEqual(await statIcons.locator('use').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))),
-      ['heart', 'attack-radius', 'attack-interval', 'runner', 'hit-spark'].map(id => `actors.svg#${id}`));
+      ['heart', 'attack-radius', 'attack-interval', 'runner', 'coin', 'unit-group', 'hit-spark'].map(id => `actors.svg#${id}`));
     await page.waitForFunction(() => [...document.querySelectorAll('.guide-card dt svg')]
       .every(svg => svg.getBBox().width > 0 && svg.getAttribute('aria-hidden') === 'true'));
     const art = units.locator('.guide-portrait svg');
     assert.deepEqual(await art.locator('use').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))),
-      ['swarm', 'armored', 'apc'].map(id => `actors.svg#${id}`));
+      ['swarm', 'armored', 'apc', 'balaclava'].map(id => `actors.svg#${id}`));
     for (const guideWidth of [706, width]) {
       await page.setViewportSize({width: guideWidth, height: 900});
       const layout = await units.getByRole('listitem').evaluateAll(cards => ({
@@ -490,9 +516,10 @@ try {
     await button('Вход 1').hover();
     await visible(page.getByText(/Вход 1.*кратчайший путь/));
     await visible(page.locator('#actions [data-action=armored] .action-hint').filter({hasText: /останавливаются у башен/i}));
-    const giantOrder = page.locator('#orders li').filter({hasText: /Гигант.*Вход 1/});
+    const gateOrders = page.locator('#gate-orders');
+    const giantOrder = gateOrders.getByRole('button', {name: /Гигант/});
     await visible(giantOrder);
-    await giantOrder.getByRole('button').hover();
+    await giantOrder.hover();
     const undoMark = page.locator('#map-undo rect');
     assert.equal(await undoMark.getAttribute('x', {timeout: 1000}), '120');
     const undoSprite = page.locator('#map-undo use');
@@ -536,10 +563,10 @@ try {
     }
     await limitError.waitFor({state: 'hidden'});
     await button('Gate 1').press('Enter');
-    const smartOrder = page.locator('#orders li').filter({hasText: /Smart slimes · Gate 1/});
-    await smartOrder.getByRole('button').hover();
+    const smartOrder = gateOrders.getByRole('button', {name: /Smart slimes/});
+    await smartOrder.hover();
     assert.equal(await undoSprite.getAttribute('href'), 'actors.svg#smart');
-    await page.locator('#orders li').filter({hasText: /Giant · Gate 1/}).getByRole('button').hover();
+    await gateOrders.getByRole('button', {name: /Giant/}).hover();
     assert.equal(await undoSprite.getAttribute('href'), 'actors.svg#giant');
     assert.equal(await undoMark.getAttribute('x'), '120');
     await page.mouse.move(0, 0);
@@ -562,6 +589,12 @@ try {
     assert.match(await card('giant').innerText(), /1\/3/);
     assert.equal(await card('smart').isDisabled(), true);
     assert.equal(await card('giant').isEnabled(), true);
+    const orderButtons = gateOrders.getByRole('button');
+    assert.deepEqual(await orderButtons.allTextContents(), ['×1', '×5']);
+    await gateOrders.getByRole('button', {name: /Giant/}).click();
+    await gateOrders.getByRole('button', {name: /Giant/}).waitFor({state: 'detached'});
+    assert.deepEqual(await orderButtons.allTextContents(), ['×5']);
+    assert.equal(await page.locator('#budget').textContent(), '19');
     await pushState({ orders: [] });
     assert.match(await card('smart').innerText(), /0\/1/);
     assert.equal(await card('smart').isEnabled(), true);
@@ -592,12 +625,71 @@ try {
     assert.deepEqual(await page.locator('#cells button:visible').evaluateAll(nodes => nodes.map(n => n.dataset.cell)), ['9']);
     await page.locator('#cells [data-cell="9"]').click();
     await visible(page.locator('#orders li').filter({ hasText: /Mine/ }));
-    assert.equal(await page.locator('#cells [data-cell="9"]').isHidden(), true);
+    const sellMine = button(/Sell Mine/);
+    await visible(sellMine);
+    assert.equal(await sellMine.getAttribute('data-sale'), '');
+    assert.equal(await page.locator('#cells [data-sale]').count(), 1);
     await button('RU').click();
     assert.match(await card('mine').innerText(), /Одна ловушка на маршрут/);
     await shot('ru-defender');
     await button('EN').click();
-    assert.equal(await card('mine').isDisabled(), true);
+    await sellMine.click();
+    await page.waitForFunction(() => document.getElementById('budget').textContent === '19');
+    assert.equal(await sellMine.count(), 0);
+    assert.equal(await page.locator('#cells [data-sale]').count(), 0);
+    assert.equal(await card('mine').isEnabled(), true);
+
+    const waveHistory = [
+      { wave: 1, attack: [], added: [], removed: [], lost: [] },
+      { wave: 2, attack: [{ type: 'swarm', cell: 3, count: 5 }, { type: 'apc', cell: 0, count: 1 },
+        { type: 'runner', cell: 3, count: 2 }], added: [{ type: 'frost', cell: 7 }],
+        removed: [{ type: 'pulse', cell: 6 }], lost: [{ type: 'fence', cell: 8 }] },
+    ];
+    const waveLog = page.locator('#wave-history');
+    assert.equal(await waveLog.isHidden(), true);
+    await pushState({ last: 2, waveHistory, fences: [],
+      towers: [...current.towers, { type: 'frost', cell: 7, hp: 5, max: 5 }] });
+    await visible(waveLog.getByRole('heading', {name: 'Wave 2', exact: true}));
+    const firstGate = waveLog.getByRole('heading', {name: 'Gate 1', exact: true}).locator('..');
+    const secondGate = waveLog.getByRole('heading', {name: 'Gate 2', exact: true}).locator('..');
+    await visible(firstGate.getByText(/Swarm.*5/));
+    await visible(firstGate.getByText(/Runners.*2/));
+    await visible(secondGate.getByText(/Carrier.*1/i));
+    assert.doesNotMatch(await waveLog.innerText(), /Crossbow|Frost|Rune|Fence/);
+    const olderWave = waveLog.locator('summary').filter({hasText: /Wave 1/});
+    assert.equal(await olderWave.locator('..').getAttribute('open'), null);
+    await olderWave.press('Enter');
+    await visible(waveLog.getByText('No groups sent'));
+    await pushState({ gold: 18 });
+    await visible(waveLog.getByText('No groups sent'));
+    await olderWave.click();
+    await waveLog.getByText('No groups sent').waitFor({state: 'hidden'});
+    assert.ok(await waveLog.evaluate(node => node.scrollWidth <= node.clientWidth));
+    await shot('wave-history-defender');
+    await button('RU').click();
+    await visible(waveLog.getByRole('heading', {name: 'Вход 2', exact: true}));
+    await visible(waveLog.getByText(/Стайка.*5/));
+    await button('EN').click();
+
+    await pushState({ seat: 1, orders: board.orders, prices: board.prices });
+    await visible(waveLog.getByText(/Frost.*column 3, row 2/i));
+    await visible(waveLog.getByText(/Rune.*column 2, row 2/i));
+    await visible(waveLog.getByText(/Fence.*column 4, row 2/i));
+    for (const name of ['Built', 'Removed before battle', 'Lost in battle']) await visible(waveLog.getByRole('heading', {name}));
+    assert.doesNotMatch(await waveLog.innerText(), /Gate|Giant|Swarm/);
+    await button('RU').click();
+    await visible(waveLog.getByRole('heading', {name: 'Волна 2', exact: true}));
+    await visible(waveLog.getByText(/Мороз.*столбец 3, ряд 2/i));
+    assert.ok(await waveLog.evaluate(node => node.scrollWidth <= node.clientWidth));
+    await shot('wave-history-attacker');
+    await button('EN').click();
+    await pushState({ done: true });
+    await visible(waveLog.getByRole('heading', {name: 'Wave 2', exact: true}));
+    await button('Play again').click();
+    await visible(page.getByRole('heading', { name: /Wave 1 of 5.*planning/ }));
+    assert.equal(await waveLog.isHidden(), true);
+    assert.doesNotMatch(await waveLog.textContent(), /Wave [12]/);
+    await pushState({ seat: 0, prices: { pulse: 4 } });
 
     for (const [code, english, russian] of [
       ['room_abandoned', /disconnected or did not act/, /отключился или не сделал ход/],
@@ -668,7 +760,7 @@ try {
     assert.deepEqual(stored.preferences, ['truck-kun-tower:lang', 'truck-kun-tower:sound', 'truck-kun-tower:theme']);
     assert.deepEqual(errors, []);
     await context.close();
-    console.log(`${width}px: preferences, auth, lobby, purchase limits, traps, skip, and guest isolation passed`);
+    console.log(`${width}px: preferences, auth, lobby, purchase limits, traps, skip, wave history, and guest isolation passed`);
   }
 } finally {
   await browser?.close();

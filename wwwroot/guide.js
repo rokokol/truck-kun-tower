@@ -66,6 +66,8 @@
       );
       if (row.stepTicks != null)
         stats.append(stat('guideSpeed', row.stepTicks.toLocaleString(document.documentElement.lang), 'runner'));
+      stats.append(stat('guidePrice', row.price ?? '—', 'coin'));
+      if (row.count != null) stats.append(stat('guideCount', row.count, 'unit-group'));
       const effect = stat('guideDamage', damage(row), 'hit-spark');
       effect.className = 'guide-card-effect';
       stats.append(effect);

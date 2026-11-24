@@ -19,13 +19,15 @@ public sealed class MatchesController(MatchService matches) : ControllerBase {
 
     [HttpGet("{id:guid}")]
     [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<MatchDetailDto> Show(Guid id, CancellationToken cancellationToken) =>
-        await matches.GetAsync(id, cancellationToken);
+        await matches.GetAsync(id, cancellationToken, User.UserId());
 
     [HttpGet("{id:guid}/replay/{wave:int?}")]
     [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ContentResult> Replay(Guid id, int? wave, CancellationToken cancellationToken) =>
-        Content(await matches.ReplayAsync(id, wave, cancellationToken), "application/json");
+        Content(await matches.ReplayAsync(id, wave, cancellationToken, User.UserId()), "application/json");
 
     [HttpPatch("{id:guid}")]
     [Authorize]

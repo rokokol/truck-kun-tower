@@ -169,8 +169,8 @@
   // ---- seats --------------------------------------------------------------
 
   const seatOf = id => store.get(key.seat(String(id)));
-  const createGuestRoom = seat => request('/api/duels', {
-    method: 'POST', body: { side: 'defender' }, auth: false, seat,
+  const createGuestRoom = (seat, practice = false, side = 'defender') => request('/api/duels', {
+    method: 'POST', body: { side, ...(practice ? {practice: true} : {}) }, auth: false, seat,
   });
   function remember(id, seatToken) {
     const room = String(id);
@@ -462,8 +462,14 @@
       },
 
       matchRival(match) {
+        if (match.practice) return this.t('practiceMatch');
         const rival = match.defender?.id === this.user?.id ? match.attacker : match.defender;
         return rival?.nickname || this.t('guestLabel');
+      },
+
+      practiceOutcome(match) {
+        const side = match.defender?.id === this.user?.id ? 'Defender' : 'Attacker';
+        return this.t(match.winner === side ? 'win' : 'loss');
       },
 
       replayHref(id) { return `?replay=${encodeURIComponent(id)}`; },
@@ -657,6 +663,38 @@
         return this.createDuel(friend.id);
       },
 
+      async playBot() {
+        if (this.busy) return;
+        this.busy = true;
+        this.lobbyError = '';
+        this.error = '';
+        this.note = '';
+        const identity = token;
+        const held = identity ? null : store.get(key.guestRoom);
+        const seat = held ? seatOf(held) : null;
+        try {
+          if (seat) {
+            try {
+              const status = await request(`/api/duels/${encodeURIComponent(held)}/state`, {auth: false, seat});
+              if (status.bot && !status.done) { this.openBoard(held, seat); return; }
+            } catch (error) {
+              if (![403, 404].includes(error.status)) throw error;
+            }
+          }
+          const answer = await request('/api/duels', {
+            method: 'POST', body: { side: this.side, practice: true }, seat,
+          });
+          if (token !== identity) return;
+          remember(answer.id, answer.seatToken);
+          this.openBoard(answer.id, answer.seatToken ?? null);
+        } catch (error) {
+          if (token !== identity) return;
+          this.showError(identity ? 'lobbyError' : 'error', feedback(error));
+        } finally {
+          this.busy = false;
+        }
+      },
+
       async continueDuel(duel) {
         const status = String(duel.status).toLowerCase();
         if (['finished', 'cancelled', 'abandoned', 'interrupted'].includes(status)) {
@@ -667,7 +705,7 @@
       },
 
       async cancelDuel(duel) {
-        if (!confirm(i18n.t('closeDuel'))) return;
+        if (!confirm(i18n.t(duel.practice ? 'closePractice' : 'closeDuel'))) return;
         this.busy = true;
         this.lobbyError = '';
         try {
@@ -850,6 +888,10 @@
       if (detail.message?.key === 'inviteDeclined') { live.note = detail.message; live.lobbyError = ''; }
       else if (detail.message) live.showError('lobbyError', detail.message);
       live.refreshLobby();
+      if (detail.practice) {
+        live.historyPages.duels = newPager();
+        live.historyPages.matches = newPager();
+      }
       live.refreshDuels();
       live.refreshOnline();
       live.refreshMatches();

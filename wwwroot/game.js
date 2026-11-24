@@ -21,7 +21,7 @@ const defending = () => state?.seat === 0;
 const types = () => defending()
   ? ['bolt', 'pulse', 'cannon', 'frost', 'spikes', 'mine', 'fence']
   : ['swarm', 'giant', 'smart', 'runner', 'armored', 'ranged', 'apc'];
-const planning = () => Boolean(state?.joined && !state.done && !state.locked && !replay && !sending && remaining() > 0);
+const planning = () => Boolean(state?.joined && !state.done && !state.locked && !replay && !sending && (state.bot || remaining() > 0));
 const route = id => field.routes.get(id);
 const entry = id => tr('gate', { index: field.entries.indexOf(id) + 1 });
 const coords = id => [id % state.width, Math.floor(id / state.width)];
@@ -80,6 +80,7 @@ function makeField() {
     `<g id="map-towers"></g><g id="map-dust"></g><g id="map-mobs"></g><g id="map-structure-hp"></g>` +
     `<g id="map-shots"></g><g id="map-hits"></g><g id="map-undo"></g>`;
   el('cells').replaceChildren();
+  clearGateOrders();
   // A swap rebuilds the buttons: the defender sees walls and the attacker sees gates
   for (const id of archive ? [] : defending() ? [...walls, ...fenceCells] : entries) {
     const button = document.createElement('button');
@@ -93,7 +94,11 @@ function makeField() {
     button.onpointerenter = button.onfocus = () => { if (!button.disabled) previewCell(id); };
     button.onpointerleave = () => { if (cell === id && !button.matches(':focus-visible')) previewCell(); };
     button.onblur = () => { if (cell === id && !button.matches(':hover')) previewCell(); };
-    button.onclick = () => { if (!button.disabled && action && planning()) move(action, id); };
+    button.onclick = () => {
+      if (button.disabled || !planning()) return;
+      if (button.hasAttribute('data-sale')) move('unbuild', id);
+      else if (action) move(action, id);
+    };
     el('cells').append(button);
   }
   makeAxes(width, height);
@@ -125,17 +130,20 @@ function makeAxes(width, height) {
   }
 }
 
+function labelCell(button, id, sale) {
+  const [x, y] = coords(id).map(value => value + 1);
+  const label = sale ? tr('sellBuilding', {name: tr(`action.${sale}`), x, y}) : defending()
+    ? tr(button.dataset.kind === 'fence' ? 'roadCell' : 'wallCell', {x, y}) : entry(id);
+  button.setAttribute('aria-label', label);
+  button.title = sale ? label : '';
+}
+
 function paintCells() {
   for (const [id, key] of [['board-rows', 'boardRow'], ['board-columns', 'boardColumn']])
     for (const number of el(id).children)
       number.setAttribute('aria-label', tr(key, {index: number.textContent}));
 
-  for (const button of el('cells').children) {
-    const id = Number(button.dataset.cell);
-    const [x, y] = coords(id).map(value => value + 1);
-    button.setAttribute('aria-label', defending()
-      ? tr(button.dataset.kind === 'fence' ? 'roadCell' : 'wallCell', { x, y }) : entry(id));
-  }
+  for (const button of el('cells').children) labelCell(button, Number(button.dataset.cell));
 }
 
 function aimAngle(x, y, target) {
@@ -408,7 +416,8 @@ function drawBattle(frame, damage, previous, moveMs = 0, showImpact = false) {
   const shots = frame?.shots || [];
   const targets = new Map([...(frame?.aims || []), ...shots].map(t => [t.cell, t]));
   const [kx, ky] = point(field.keep);
-  const preview = !replay && planning() && cell !== undefined;
+  const preview = !replay && planning() && cell !== undefined &&
+    (!defending() || !state.refundableCells?.includes(cell));
   // Only the smart slime has a guaranteed shortest route.
   const options = cell === undefined ? []
     : [route(cell), ...(field.alternates.get(cell) ?? [])].filter(Boolean);
@@ -455,7 +464,7 @@ const remaining = () => clock ? Math.max(0, clock.left - Math.floor((performance
 
 function paintClock() {
   const node = el('clock');
-  const show = Boolean(state && state.joined && !state.done && !replay);
+  const show = Boolean(state && state.joined && !state.done && !state.bot && !replay);
   node.hidden = !show;
   if (!show) return;
   const left = remaining();
@@ -480,13 +489,141 @@ function previewCell(id) {
   drawBattle();
 }
 
+let gateOrderKey;
+function clearGateOrders() {
+  gateOrderKey = undefined;
+  el('gate-orders').replaceChildren();
+}
+
+function paintGateOrders(orders, editable) {
+  const layer = el('gate-orders');
+  const key = JSON.stringify([document.documentElement.lang, editable, orders]);
+  if (gateOrderKey === key) return;
+  gateOrderKey = key;
+  const byGate = new Map();
+  orders.forEach(({type, cell: gate, count}, index) => {
+    if (!byGate.has(gate)) byGate.set(gate, []);
+    byGate.get(gate).push({type, count, index});
+  });
+  layer.replaceChildren(...Array.from(byGate, ([gate, queue]) => {
+    const [x, y] = coords(gate);
+    const above = y >= state.height / 2;
+    const panel = document.createElement('div');
+    panel.className = above ? 'gate-queue above' : 'gate-queue';
+    panel.style.setProperty('--gate-x', `${(x + .5) / state.width * 100}%`);
+    panel.style.setProperty('--gate-edge', `${(y + (above ? 0 : 1)) / state.height * 100}%`);
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-label', entry(gate));
+    const name = document.createElement('span');
+    name.className = 'gate-queue-name';
+    name.textContent = entry(gate);
+    const groups = document.createElement('div');
+    groups.className = 'gate-queue-groups';
+    queue.forEach(({type, count, index}, position) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gate-order';
+      button.disabled = !editable;
+      button.title = tr('cancelGroup', {name: tr(`action.${type}`), count, position: position + 1});
+      button.setAttribute('aria-label', button.title);
+      button.innerHTML = '<svg aria-hidden="true" viewBox="0 0 32 32"></svg>';
+      button.firstElementChild.innerHTML = sprite(type, 16, 16, 32);
+      if (Number.isInteger(count)) button.append(`×${count}`);
+      bindUndo(button, {type, id: gate, index}, false);
+      groups.append(button);
+    });
+    panel.append(name, groups);
+    return panel;
+  }));
+}
+
+function bindUndo(button, row, defense) {
+  const preview = el('map-undo');
+  const highlight = () => {
+    if (button.disabled || !planning()) return;
+    const [x, y] = coords(row.id);
+    const frame = `<rect x="${x * tile}" y="${y * tile}" width="${tile}" height="${tile}" rx="4"/>`;
+    preview.innerHTML = defense ? frame : frame + sprite(row.type, ...point(row.id), 29);
+  };
+  const unhighlight = () => {
+    if (!button.matches(':hover, :focus-visible')) preview.replaceChildren();
+  };
+  button.onpointerenter = button.onfocus = highlight;
+  button.onpointerleave = button.onblur = unhighlight;
+  button.onclick = () => {
+    if (!button.disabled && planning()) move(defense ? 'unbuild' : 'cancel', defense ? row.id : row.index);
+  };
+}
+
+let waveHistoryKey;
+
+function clearWaveHistory() {
+  waveHistoryKey = undefined;
+  el('wave-history').hidden = true;
+  el('wave-history-entries').replaceChildren();
+}
+
+function paintWaveHistory() {
+  const last = replay ? replay.snapshot.last - 1 : state.last;
+  const history = state.joined && !state.bot ? state.waveHistory?.filter(row => row.wave <= last) : [];
+  if (!history?.length) return clearWaveHistory();
+
+  const entries = el('wave-history-entries');
+  const key = JSON.stringify([state.seat, document.documentElement.lang, history]);
+  if (key === waveHistoryKey) return;
+  waveHistoryKey = key;
+  const open = new Set(Array.from(entries.querySelectorAll('details[open]'), node => node.dataset.wave));
+  const textNode = (tag, value) => {
+    const node = document.createElement(tag);
+    node.textContent = value;
+    return node;
+  };
+  const group = (name, items) => {
+    const block = document.createElement('div');
+    const list = document.createElement('ul');
+    list.append(...items.map(item => textNode('li', item)));
+    block.append(textNode('h4', name), list);
+    return block;
+  };
+  entries.replaceChildren(...history.slice().reverse().map((row, index) => {
+    const wave = document.createElement(index === 0 ? 'div' : 'details');
+    wave.append(textNode(index === 0 ? 'h3' : 'summary', tr('historyWave', {wave: row.wave})));
+    if (index !== 0) {
+      wave.dataset.wave = String(row.wave);
+      wave.open = open.has(wave.dataset.wave);
+    }
+    const groups = document.createElement('div');
+    groups.className = 'wave-history-groups';
+    if (defending()) {
+      const byGate = new Map(field.entries.map(gate => [gate, []]));
+      for (const {type, cell, count} of row.attack) {
+        byGate.get(cell)?.push(tr('historyGroup', {name: tr(`action.${type}`), count}));
+      }
+      for (const [gate, items] of byGate) {
+        if (items.length) groups.append(group(entry(gate), items));
+      }
+    } else {
+      for (const [label, structures] of [['historyAdded', row.added], ['historyRemoved', row.removed], ['historyLost', row.lost]]) {
+        if (!structures.length) continue;
+        groups.append(group(tr(label), structures.map(({type, cell}) => {
+          const [x, y] = coords(cell).map(value => value + 1);
+          return tr('historyStructure', {name: tr(`action.${type}`), x, y});
+        })));
+      }
+    }
+    wave.append(groups.childElementCount ? groups : textNode('p', tr(defending() ? 'historyNoGroups' : 'historyNoDefense')));
+    return wave;
+  }));
+  el('wave-history').hidden = false;
+}
+
 function render(redraw = true) {
   if (!state) return;
   const {gold, done, hp, joined, locked, last, orders, prices, towers} = state;
   paintRoomControls();
   const invite = el('invite');
-  invite.hidden = joined;
-  if (joined) invite.open = false;
+  invite.hidden = joined || state.bot;
+  if (joined || state.bot) invite.open = false;
   const editable = planning();
   const skipping = !defending() && orders.length === 0;
   el('status').textContent = replay ? tr('battle', { wave: replay.snapshot.last, total: waves })
@@ -498,21 +635,26 @@ function render(redraw = true) {
     : locked ? tr('waitingReady')
     : tr('planning', { wave: last + 1, total: waves });
   el('rival').textContent = !joined ? tr(state.randomOpponent ? 'randomCreateHint' : 'noOpponent')
+    : state.botOpponent ? tr('botOpponent')
     : state.opponent ? tr('opponent', { name: state.opponent }) : tr('guestOpponent');
   const round = replay?.snapshot.last ?? last;
   el('pips').innerHTML = Array.from({length: waves}, (_, i) => `<i class="${i < round ? 'done' : ''}${i === round && !done ? ' now' : ''}"></i>`).join('');
   paintClock();
-  // A lone player may move to the other chair, so the button does not wait for the opponent
-  const swapFree = !done && state.swap == null && last === 0 &&
-    towers.length === 0 && state.fences.length === 0 && orders.length === 0 && !locked && !replay;
+  const swapFree = !replay && !sending && state.canSwap;
   el('swap').hidden = !swapFree;
-  el('swapWait').hidden = !(state.swap === 'mine' && !replay);
-  el('swapAsk').hidden = !(state.swap === 'theirs' && !replay);
+  el('swapWait').hidden = state.bot || !(state.swap === 'mine' && !replay);
+  el('swapAsk').hidden = state.bot || !(state.swap === 'theirs' && !replay);
   el('afterMatch').hidden = !(joined && done) || !!replay;
   el('watchReplay').href = `?replay=${encodeURIComponent(state.matchId)}`;
+  el('watchReplay').hidden = state.bot && !state.practiceReplay;
   el('field').hidden = false;
   el('planning').hidden = !joined || done || !!replay;
   el('budget').textContent = replay?.gold ?? gold;
+  const built = defending()
+    ? [...towers.map(({type, cell: id}) => ({type, id})), ...state.fences.map(({cell: id}) => ({type: 'fence', id}))]
+    : [];
+  const refundable = new Set(state.refundableCells);
+  const sales = new Map(built.filter(row => refundable.has(row.id)).map(row => [row.id, row.type]));
   const occupied = new Set([...towers, ...state.fences].map(t => t.cell));
   const trapSites = new Set((state.trapCells ?? []).filter(id => !occupied.has(id)));
   const used = new Map();
@@ -526,8 +668,11 @@ function render(redraw = true) {
   if (defending() && cell !== undefined && blocked(cell)) cell = undefined;
   for (const button of el('cells').children) {
     const id = Number(button.dataset.cell);
-    button.hidden = defending() && (blocked(id) || onRoad(action) !== (button.dataset.kind === 'fence'));
-    button.disabled = !editable || !action || button.hidden;
+    const sale = editable ? sales.get(id) : undefined;
+    button.toggleAttribute('data-sale', Boolean(sale));
+    labelCell(button, id, sale);
+    button.hidden = !sale && defending() && (blocked(id) || onRoad(action) !== (button.dataset.kind === 'fence'));
+    button.disabled = !editable || (!sale && !action) || button.hidden;
   }
   for (const button of el('actions').children) {
     const type = button.dataset.action;
@@ -546,38 +691,21 @@ function render(redraw = true) {
   ready.parentElement.hidden = !joined || done || !!replay;
   ready.textContent = tr(locked ? 'readyConfirmed' : skipping ? 'skipWave' : 'ready');
   ready.disabled = !editable;
-  // Both sides list what they committed this turn: orders on the attack, structures on the defence
-  const built = defending()
-    ? [...towers.map(({type, cell: id}) => ({type, id})), ...state.fences.map(({cell: id}) => ({type: 'fence', id}))]
-    : orders.map(({type, cell: id}, index) => ({type, id, index}));
-  const preview = el('map-undo');
-  preview.replaceChildren();
+  el('map-undo').replaceChildren();
+  paintGateOrders(!replay && !done && !defending() ? orders : [], editable);
+  paintWaveHistory();
   el('orders').hidden = built.length === 0;
   el('orders').replaceChildren(...built.map(row => {
     const li = document.createElement('li');
-    const where = defending() ? coords(row.id).map(value => value + 1).join(', ') : entry(row.id);
+    const where = coords(row.id).map(value => value + 1).join(', ');
     li.append(`${tr(`action.${row.type}`)} · ${where} `);
     const undo = document.createElement('button');
     undo.type = 'button';
-    const oldStructure = defending() && state.refundableCells && !state.refundableCells.includes(row.id);
-    undo.textContent = tr(oldStructure ? 'demolish' : 'cancel');
-    if (oldStructure) undo.title = tr('noRefund');
+    const sale = refundable.has(row.id);
+    undo.textContent = tr(sale ? 'sell' : 'demolish');
+    if (!sale) undo.title = tr('noRefund');
     undo.disabled = !editable;
-    const highlight = () => {
-      if (undo.disabled) return;
-      const [x, y] = coords(row.id);
-      const frame = `<rect x="${x * tile}" y="${y * tile}" width="${tile}" height="${tile}" rx="4"/>`;
-      preview.innerHTML = defending() ? frame : frame + sprite(row.type, ...point(row.id), 29);
-    };
-    const unhighlight = () => {
-      if (!undo.matches(':hover, :focus-visible')) preview.replaceChildren();
-    };
-    undo.onpointerenter = undo.onfocus = highlight;
-    undo.onpointerleave = undo.onblur = unhighlight;
-    undo.onclick = () => {
-      if (undo.disabled) return;
-      move(defending() ? 'unbuild' : 'cancel', defending() ? row.id : row.index);
-    };
+    bindUndo(undo, row, true);
     li.append(undo);
     return li;
   }));
@@ -684,7 +812,7 @@ async function archiveWave(wave, {reuse = false} = {}) {
   paintArchive();
   setGameError(null);
   try {
-    const record = current.record ?? await Tower.request(`${replayApi(current.id)}/${wave}`, {auth: false});
+    const record = current.record ?? await Tower.request(`${replayApi(current.id)}/${wave}`);
     if (archive !== current || request !== current.request) return;
     current.record = record;
     state = {...current.map, towers: record.replayStart.buildings, fences: record.replayStart.fences,
@@ -715,7 +843,7 @@ async function openArchive(id) {
   el('liveBudget').hidden = true;
   paintArchive();
   try {
-    const map = await Tower.request(replayApi(id), {auth: false});
+    const map = await Tower.request(replayApi(id));
     if (archive !== current) return;
     current.map = map;
     state = map;
@@ -737,6 +865,7 @@ function accept(next) {
   // on the first state of a room and whenever the seat moves
   const rematched = previous && previous.matchId !== next.matchId;
   if (rematched) {
+    clearWaveHistory();
     replay = undefined;
     seen = 0;
     action = cell = undefined;
@@ -761,7 +890,10 @@ async function refresh() {
 
 function sync() {
   if (!roomId) return;
-  refresh().catch(error => {
+  const pending = refresh();
+  const request = sequence;
+  pending.catch(error => {
+    if (request !== sequence) return;
     // A seat can be taken away or a room can die; anything else is a passing hiccup
     if ([401, 403, 404].includes(error.status)) {
       if (error.status === 404) Tower.forgetSeat(roomId);
@@ -782,7 +914,7 @@ async function move(type, target) {
   try {
     const next = await call(room('moves'), {
       method: 'POST',
-      body: {wave, action: type, cell: target === undefined ? null : target},
+      body: {wave, action: type, cell: target === undefined ? null : target, ...(state.bot ? {matchId: state.matchId} : {})},
     });
     if (batch !== generation) return;
     if (type !== 'ready' && type !== 'rematch') sounds.play('coin');
@@ -848,6 +980,8 @@ function paintActions() {
 
 function paintRoomControls() {
   el('leave').textContent = tr(state && !state.done ? 'leaveDuel' : Tower.token ? 'backToDuels' : 'backHome');
+  el('practice-back').hidden = !(state?.bot && !state.done);
+  el('practice-back').textContent = tr(Tower.token ? 'backToDuels' : 'backHome');
   el('copy').textContent = tr(copyNote);
 }
 
@@ -860,6 +994,7 @@ function wipe() {
   clearBattleActors();
   state = field = action = cell = replay = archive = undefined;
   el('replayTools').hidden = true;
+  el('practice-back').hidden = true;
   el('invite').hidden = true;
   el('game-cap').hidden = false;
   el('liveBudget').hidden = false;
@@ -869,6 +1004,8 @@ function wipe() {
   copyNote = 'copyLink';
   el('map').innerHTML = '';
   el('cells').replaceChildren();
+  clearGateOrders();
+  clearWaveHistory();
   el('actions').replaceChildren();
   el('orders').replaceChildren();
   el('orders').hidden = true;
@@ -921,7 +1058,7 @@ async function open(detail = {}) {
 
 function tick() {
   if (!roomId) return;
-  if (remaining() === 0 && !state?.done && state?.joined && !replay) render();
+  if (!state?.bot && remaining() === 0 && !state?.done && state?.joined && !replay) render();
   else paintClock();
   // The socket carries every change; the poll is the fallback when it never came up.
   // While it is up, a rare reconcile keeps a broadcast that went missing from
@@ -945,12 +1082,13 @@ function leave(message) {
   roomId = null;
   seatToken = null;
   sending = false;
+  const practice = Boolean(state?.bot);
   wipe();
   el('game').hidden = true;
   setGameError(null);
   el('link').value = '';
   history.replaceState(null, '', location.pathname);
-  window.dispatchEvent(new CustomEvent('tower:screen', { detail: {screen: 'lobby', message: message || null} }));
+  window.dispatchEvent(new CustomEvent('tower:screen', { detail: {screen: 'lobby', practice, message: message || null} }));
 }
 
 el('ready').onclick = () => { if (!el('ready').disabled) move('ready', null); };
@@ -958,11 +1096,12 @@ el('rematch').onclick = () => { if (!el('afterMatch').hidden) move('rematch', nu
 el('swap').onclick = () => { if (!el('swap').hidden) swap('swap'); };
 el('swapYes').onclick = () => swap('swap/accept');
 el('swapNo').onclick = () => swap('swap/decline');
+el('practice-back').onclick = () => { if (state?.bot && !sending) leave(null); };
 el('leave').onclick = async () => {
   if (archive) { location.assign(location.pathname); return; }
   if (!roomId || el('leave').disabled || (state?.done && sending)) return;
   if (!state || state.done) { leave(null); return; }
-  if (!confirm(tr('closeDuel'))) return;
+  if (!confirm(tr(state.bot ? 'closePractice' : 'closeDuel'))) return;
   const id = roomId;
   el('leave').disabled = true;
   try {
@@ -992,7 +1131,7 @@ el('again').onclick = async () => {
   el('again').disabled = el('rematch').disabled = true;
   setGameError(null);
   try {
-    const next = await Tower.createGuestRoom(seatToken);
+    const next = await Tower.createGuestRoom(seatToken, state.bot, state.bot ? state.side : 'defender');
     if (batch !== generation) return;
     Tower.remember(next.id, next.seatToken);
     Tower.unwatchRoom(id);

@@ -9,18 +9,20 @@ public sealed class MatchService(IUnitOfWork unit) {
     public async Task<List<MatchDto>> MineAsync(Guid me, int take = DefaultTake, CancellationToken token = default, int skip = 0) =>
         await ToDtos(await unit.Matches.ForUserAsync(me, Size(take), token, Math.Max(0, skip)), token);
 
-    public async Task<MatchDetailDto> GetAsync(Guid id, CancellationToken token = default) {
-        var match = await unit.Matches.ByIdAsync(id, token) ?? throw AppError.NotFound("Матч не найден");
+    public async Task<MatchDetailDto> GetAsync(Guid id, CancellationToken token = default, Guid? viewer = null) {
+        var match = await ReadableAsync(id, viewer, token);
         var names = await NamesAsync([match], token);
         return new MatchDetailDto(match.Id, match.RoomId, match.Winner, match.HeartsLeft, match.WavesPlayed,
             match.Note, match.StartedAt, match.FinishedAt,
             Brief(match.DefenderId, names), Brief(match.AttackerId, names),
-            await unit.Matches.WavesAsync(id, token));
+            await unit.Matches.WavesAsync(id, token), match.Practice);
     }
 
-    public async Task<string> ReplayAsync(Guid id, int? wave, CancellationToken token = default) =>
-        (wave is int number ? await unit.Matches.ReplayWaveAsync(id, number, token)
-            : await unit.Matches.ReplayMapAsync(id, token)) ?? throw AppError.NotFound("Запись не найдена");
+    public async Task<string> ReplayAsync(Guid id, int? wave, CancellationToken token = default, Guid? viewer = null) {
+        var match = await ReadableAsync(id, viewer, token);
+        return (wave is int number ? await unit.Matches.ReplayWaveAsync(id, number, token) : match.ReplayMapJson)
+            ?? throw AppError.NotFound("Запись не найдена");
+    }
 
     public async Task<StatsDto> StatsAsync(CancellationToken token = default) {
         var stats = await unit.Matches.StatsAsync(token);
@@ -34,7 +36,7 @@ public sealed class MatchService(IUnitOfWork unit) {
             .Select(row => new LeaderDto(row.UserId, row.Nickname, row.Played, row.Wins)).ToList();
 
     public async Task<MatchDto> SetNoteAsync(Guid me, Guid id, string? note, CancellationToken token = default) {
-        var match = await Require(id, token);
+        var match = await ReadableAsync(id, me, token);
         RequireParticipant(match, me);
         var text = (note ?? "").Trim();
         if (text.Length > MaxNote) throw AppError.BadRequest($"Заметка — до {MaxNote} символов");
@@ -45,7 +47,7 @@ public sealed class MatchService(IUnitOfWork unit) {
     }
 
     public async Task DeleteAsync(Guid me, Guid id, CancellationToken token = default) {
-        var match = await Require(id, token);
+        var match = await ReadableAsync(id, me, token);
         RequireParticipant(match, me);
         unit.Matches.Remove(match);
         await unit.SaveAsync(token);
@@ -53,8 +55,12 @@ public sealed class MatchService(IUnitOfWork unit) {
 
     static int Size(int take) => Math.Clamp(take, 1, MaxTake);
 
-    async Task<MatchRow> Require(Guid id, CancellationToken token) =>
-        await unit.Matches.ByIdAsync(id, token) ?? throw AppError.NotFound("Матч не найден");
+    async Task<MatchRow> ReadableAsync(Guid id, Guid? viewer, CancellationToken token) {
+        var match = await unit.Matches.ByIdAsync(id, token);
+        if (match is null || (match.Practice && (viewer is null || (match.DefenderId != viewer && match.AttackerId != viewer))))
+            throw AppError.NotFound("Матч не найден");
+        return match;
+    }
 
     // A note and a delete belong to the two who played; a stranger learns nothing about the row
     static void RequireParticipant(MatchRow match, Guid me) {
@@ -80,7 +86,7 @@ public sealed class MatchService(IUnitOfWork unit) {
     static MatchDto ToDto(MatchRow row, Dictionary<Guid, string> names) =>
         new(row.Id, row.RoomId, row.Winner, row.HeartsLeft, row.WavesPlayed, row.Note,
             row.StartedAt, row.FinishedAt, Brief(row.DefenderId, names), Brief(row.AttackerId, names),
-            row.ReplayMapJson is not null);
+            row.ReplayMapJson is not null, row.Practice);
 
     static UserBrief? Brief(Guid? id, Dictionary<Guid, string> names) =>
         id is Guid userId ? new UserBrief(userId, names.GetValueOrDefault(userId, "")) : null;

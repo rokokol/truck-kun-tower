@@ -28,10 +28,12 @@ internal static class Storage {
     }
 
     public static async Task SaveAsync(IServiceScopeFactory scopes, ILogger log, string roomId, Duel.ResultWrite finished) {
+        if (finished.Practice && finished.Archive is null) return;
+        bool saved = false;
         try {
             await using var scope = scopes.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<DuelDb>();
-            db.Matches.Add(new MatchRow {
+            var unit = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            unit.Matches.Add(new MatchRow {
                 Id = finished.Id,
                 RoomId = roomId,
                 DefenderId = finished.DefenderId,
@@ -42,6 +44,7 @@ internal static class Storage {
                 HeartsLeft = finished.HeartsLeft,
                 Winner = finished.Winner,
                 Survivor = finished.Survivor,
+                Practice = finished.Practice,
                 ReplayMapJson = JsonSerializer.Serialize(finished.Map, Json),
                 Waves = finished.Log.Select(wave => new WaveRow {
                     Number = wave.Number,
@@ -54,14 +57,17 @@ internal static class Storage {
                 }).ToList()
             });
             // The lobby row and the board finish together, so "my duels" does not keep a dead room open
-            var room = await db.Rooms.FirstOrDefaultAsync(row => row.Id == roomId);
+            var room = finished.Practice ? null : await unit.Rooms.ByIdAsync(roomId);
             if (room is not null) {
                 room.Status = RoomStatus.Finished;
                 room.FinishedAt = finished.FinishedAt;
             }
-            await db.SaveChangesAsync();
+            await unit.SaveAsync();
+            saved = true;
         } catch (Exception error) {
             log.LogError(error, "Match {Match} was not saved", finished.Id);
+        } finally {
+            finished.Archive?.TrySetResult(saved);
         }
     }
 }

@@ -11,6 +11,10 @@ data/
 *.db
 *.db-shm
 *.db-wal
+core
+core.*
+tools/Trainer/
+designs/
 check.mjs
 balance.mjs
 README.md

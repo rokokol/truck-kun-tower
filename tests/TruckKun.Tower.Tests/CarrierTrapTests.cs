@@ -26,7 +26,14 @@ public sealed class CarrierTrapTests {
         Assert.Single(frames[first].Mobs, mob => mob.Kind == "balaclava");
         Assert.Equal(walk[..^1], Mobs(frames, "balaclava").Select(mob => mob.Cell).Distinct());
         int last = Array.FindLastIndex(frames, frame => frame.Mobs.Any(mob => mob.Kind == "apc"));
-        Assert.Equal(Passengers, Mobs(frames, "balaclava").Select(mob => mob.Id).Distinct().Count());
+        int unloaded = Mobs(frames, "balaclava").Select(mob => mob.Id).Distinct().Count();
+        Assert.Equal(Passengers, unloaded);
+        var units = JsonSerializer.SerializeToElement(Duel.Guide()).GetProperty("units").EnumerateArray().ToArray();
+        var carrier = Assert.Single(units, unit => unit.GetProperty("type").GetString() == "apc");
+        var passenger = Assert.Single(units, unit => unit.GetProperty("type").GetString() == "balaclava");
+        Assert.Equal(1, carrier.GetProperty("count").GetInt32());
+        Assert.Equal(unloaded, passenger.GetProperty("count").GetInt32());
+        Assert.Equal(JsonValueKind.Null, passenger.GetProperty("price").ValueKind);
         Assert.DoesNotContain(frames.Skip(last + 1), frame => frame.Mobs.Any(mob => mob.Kind == "apc"));
         Assert.Equal(stage.InitialHp - Passengers * PassengerDamage, frames[^1].Hp);
         AssertSingleFile(frames);
@@ -261,7 +268,7 @@ public sealed class CarrierTrapTests {
 
         public void Build(string type, int cell) => Move(Duel.Defender, type, cell);
         public void Order(string type, bool fundOrder = false) {
-            if (fundOrder) {
+            if (fundOrder || type == "apc") {
                 var view = JsonSerializer.SerializeToElement(duel.View(Duel.Attacker), Json);
                 Field<int[]>(duel, "gold")[Duel.Attacker] = view.GetProperty("prices").GetProperty(type).GetInt32();
             }

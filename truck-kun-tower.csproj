@@ -17,11 +17,19 @@
 
   <ItemGroup>
     <!-- The test project lives under this folder; its files must not join the web assembly -->
-    <Compile Remove="tests/**/*.cs" />
+    <Compile Remove="tests/**/*.cs;tools/Trainer/**/*.cs;tools/Bench/**/*.cs" />
+    <Content Remove="tools/Trainer/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The trained weights travel inside the assembly, so a deployment carries its bots -->
+    <EmbeddedResource Include="Bots/bot-weights.json" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="TruckKun.Tower.Tests" />
+    <InternalsVisibleTo Include="TruckKun.Tower.Bench" />
+    <InternalsVisibleTo Include="TruckKun.Tower.Trainer" />
   </ItemGroup>
 
 </Project>

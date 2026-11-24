@@ -17,6 +17,8 @@ const i18n = (() => {
     guideStructureBonus: ['Бонус за постройку', 'Bonus per structure'],
     guideEconomy: ['В начале волны обе стороны получают базовый бюджет из таблицы. Неистраченные монеты не переносятся. Бонус получает только атакующий: за каждую башню, забор и ловушку, которые остались после предыдущего боя. Крепость не считается. Отмена заказа или снос постройки, купленной в текущей волне, возвращает монеты. За снос старых построек монеты не возвращаются', 'Both sides get the base budget in the table at the start of each wave. Unspent coins do not carry over. Only the attacker gets a bonus for each tower, fence, and trap that survived the previous battle. The keep does not count. Cancel an order or remove a structure bought this wave to get its coins back. Old structures give no refund'],
     guideHp: ['HP', 'HP'],
+    guidePrice: ['Цена', 'Price'],
+    guideCount: ['Юнитов', 'Units'],
     guideDamage: ['Урон', 'Damage'],
     guideRadius: ['Радиус, кл.', 'Range, tiles'],
     guideSpeed: ['Тиков на клетку', 'Ticks per tile'],
@@ -99,6 +101,7 @@ const i18n = (() => {
     searchTime: ['Время ожидания: {elapsed}', 'Wait time: {elapsed}'],
     newDuel: ['Новая дуэль', 'New duel'],
     createDuel: ['Создать дуэль', 'Create a duel'],
+    playBot: ['Играть с ботом', 'Play a bot'],
     createHint: ['После создания пришли другу ссылку-приглашение или нажми «Пригласить в дуэль» рядом с его ником', 'Send the invite link to a friend, or choose “Invite to a duel” next to their nickname'],
     myDuels: ['Мои дуэли', 'My duels'],
     emptySeat: ['свободное место', 'open seat'],
@@ -125,8 +128,12 @@ const i18n = (() => {
 
     leaveDuel: ['Выйти', 'Leave'],
     demolish: ['Снести', 'Demolish'],
+    sell: ['Продать', 'Sell'],
+    sellBuilding: ['Продать: {name} ({x}, {y})', 'Sell {name} ({x}, {y})'],
+    cancelGroup: ['Отменить: {name} ×{count}, группа {position}', 'Cancel {name} ×{count}, group {position}'],
     noRefund: ['За снос старой постройки золото не возвращается', 'Old structures give no refund'],
     duelBusy: ['Сначала выйди из текущей дуэли', 'Leave your current duel first'],
+    soloBusy: ['Слишком много одиночных досок открыто. Попробуй позже', 'Too many solo boards are open. Try again later'],
     backToDuels: ['К списку дуэлей', 'Back to duels'],
     backHome: ['На главную', 'Back to home'],
     inviteOpponent: ['Пригласить соперника', 'Invite an opponent'],
@@ -142,6 +149,15 @@ const i18n = (() => {
     boardRow: ['Ряд {index}', 'Row {index}'],
     boardColumn: ['Столбец {index}', 'Column {index}'],
     waveOrders: ['Приказы на волну', 'Wave orders'],
+    waveHistory: ['Итоги волн', 'Wave results'],
+    historyWave: ['Волна {wave}', 'Wave {wave}'],
+    historyGroup: ['{name} ×{count}', '{name} ×{count}'],
+    historyStructure: ['{name} · столбец {x}, ряд {y}', '{name} · column {x}, row {y}'],
+    historyAdded: ['Построено', 'Built'],
+    historyRemoved: ['Убрано до боя', 'Removed before battle'],
+    historyLost: ['Потеряно в бою', 'Lost in battle'],
+    historyNoGroups: ['Слизней не отправили', 'No groups sent'],
+    historyNoDefense: ['Изменений в обороне нет', 'No defense changes'],
     orderType: ['Тип приказа', 'Order type'],
     groups: ['Группы на эту волну', 'Groups for this wave'],
     ready: ['Готов к волне', 'Ready for the wave'],
@@ -176,6 +192,10 @@ const i18n = (() => {
     waitingReady: ['Ты готов. Ждём соперника', 'You’re ready. Waiting for your opponent'],
     noOpponent: ['Второй игрок ещё не подключился — пришли ему ссылку-приглашение', 'No opponent yet. Send someone the invite link'],
     opponent: ['Соперник: {name}', 'Opponent: {name}'],
+    botLabel: ['Бот', 'Bot'],
+    practiceMatch: ['Против бота', 'Against a bot'],
+    closePractice: ['Закрыть тренировочную дуэль?', 'Close the practice duel?'],
+    botOpponent: ['Соперник: бот', 'Opponent: bot'],
     guestOpponent: ['Соперник: гость без аккаунта', 'Opponent: guest'],
     timeLeft: ['на размышление {seconds} с', '{seconds} s to plan'],
     timeUp: ['время вышло', 'time’s up'],
@@ -286,6 +306,7 @@ const i18n = (() => {
       if (status === 404 && code === 'room_cancelled') return message('opponentLeftDuel');
       if (status === 409 && code === 'invite_sender_offline') return message('inviteSenderOffline');
       if (status === 409 && code === 'duel_busy') return message('duelBusy');
+      if (status === 409 && code === 'solo_busy') return message('soloBusy');
       if (status === 409 && code === 'purchase_limit') return message('purchaseLimit');
       const name = `http.${status}`;
       const summary = Object.hasOwn(strings, name) ? message(name) : message('requestFailed', { status });

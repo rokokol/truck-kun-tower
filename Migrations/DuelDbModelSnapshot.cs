@@ -108,6 +108,9 @@ namespace truckkuntower.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("Practice")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("ReplayMapJson")
                         .HasColumnType("jsonb");
 

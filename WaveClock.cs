@@ -32,19 +32,21 @@ internal sealed class WaveClock(
 
     async Task<bool> TryRetireAsync(string id, Duel game, CancellationToken token) {
         lock (game) if (!game.ShouldRetire(DateTime.UtcNow)) return false;
-        bool finished;
+        bool finished, solo;
         await rooms.Membership.WaitAsync(token);
         try {
             lock (game) {
                 if (rooms.Get(id) != game || !game.ShouldRetire(DateTime.UtcNow)) return false;
                 finished = game.Done;
+                solo = game.Solo;
                 rooms.Close(id, game, RoomStatus.Abandoned);
             }
         } finally {
             rooms.Membership.Release();
         }
         if (!finished) {
-            await Storage.AbandonAsync(scopes, log, id);
+            // A practice board has no row, so there is nothing to mark abandoned
+            if (!solo) await Storage.AbandonAsync(scopes, log, id);
             await bell.Clients.Group(Bell.RoomGroup(id)).SendAsync("RoomAbandoned", id, token);
         }
         return true;

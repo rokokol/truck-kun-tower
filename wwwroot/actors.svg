@@ -78,6 +78,11 @@
   <rect x="7.5" y="14.5" width="17" height="9" rx="4.5" fill="var(--ddlc-sayori-eye)" stroke="var(--ddlc-ink)" stroke-width="2"/>
   <path d="M12.5 18v2m7-2v2" stroke="var(--ddlc-ink)" stroke-width="2.5" stroke-linecap="round"/>
 </symbol>
+<symbol id="unit-group" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <path fill="var(--ddlc-sayori)" d="M3 8h3v1h1v1h1v4H1V10h1V9h1zM11 8h3v1h1v1h1v4H9V10h1V9h1z"/>
+  <path fill="var(--ddlc-paper)" d="M2 10h1v1H2zM10 10h1v1h-1z"/>
+  <path fill="var(--ddlc-ink)" d="M3 11h1v1H3zM6 11h1v1H6zM11 11h1v1h-1zM14 11h1v1h-1z"/>
+</symbol>
 <symbol id="groups-left" viewBox="0 0 16 16" shape-rendering="crispEdges">
   <path fill="var(--ddlc-rule)" d="M6 2h4v2h2v3H4V4h2zM2 9h4v1h1v4H0v-4h2zm8 0h4v1h2v4H9v-4h1z"/>
   <path fill="var(--ddlc-ground)" d="M6 5h1v1H6zm3 0h1v1H9zm-7 7h1v1H2zm3 0h1v1H5zm6 0h1v1h-1zm3 0h1v1h-1z"/>

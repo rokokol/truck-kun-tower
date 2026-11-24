@@ -120,6 +120,8 @@
         <button id="start" type="button" x-show="!sessionCheckFailed" @click="playGuest()" :disabled="busy"
                 x-text="t(pendingRoom ? 'join' : 'guest')"></button>
         <p class="fine" x-show="pendingRoom" x-text="t('pendingRoom', { room: pendingRoom })"></p>
+        <button id="start-bot" type="button" x-show="!sessionCheckFailed && !pendingRoom" @click="playBot()" :disabled="busy"
+                x-text="t('playBot')"></button>
 
         <ul class="badges"><li>1 × 1</li><li x-text="t('fiveWaves')"></li><li x-text="t('mode')"></li></ul>
       </section>
@@ -242,6 +244,7 @@
           <label class="fine"><input type="checkbox" x-model="randomOpponent"> <span x-text="t('randomOpponent')"></span></label>
           <button type="button" class="wide" @click="createDuel()" :disabled="busy" x-text="t('createDuel')"></button>
           <p class="fine" x-text="t(randomOpponent ? 'randomCreateHint' : 'createHint')"></p>
+          <button id="play-bot" type="button" @click="playBot()" :disabled="busy" x-text="t('playBot')"></button>
         </div>
 
         <section class="card" x-show="duels.length" aria-labelledby="duels-title">
@@ -250,7 +253,7 @@
             <template x-for="duel in duels" :key="duel.id">
               <li class="duel">
                 <span class="duel-line">
-                  <b x-text="duel.opponent?.nickname || t(duel.startedAt ? 'guestLabel' : 'emptySeat')"></b>
+                  <b x-text="duel.practice ? t('botLabel') : duel.opponent?.nickname || t(duel.startedAt ? 'guestLabel' : 'emptySeat')"></b>
                   <small class="tag" x-text="statusOf(duel.status)"></small>
                   <small class="tag" x-text="sideOf(duel.mySide)"></small>
                 </span>
@@ -261,7 +264,7 @@
                   <template x-if="canContinue(duel)">
                     <span class="row-actions">
                       <button type="button" @click="continueDuel(duel)" x-text="t('continue')"></button>
-                      <button type="button" class="ghost" @click="copyLink(duel.id)" x-text="t('link')"></button>
+                      <button type="button" class="ghost" x-show="!duel.practice" @click="copyLink(duel.id)" x-text="t('link')"></button>
                       <button type="button" class="ghost" @click="cancelDuel(duel)" x-text="t('leaveDuel')"></button>
                     </span>
                   </template>
@@ -287,6 +290,7 @@
               <li class="duel">
                 <div class="duel-line">
                   <b x-text="matchRival(match)"></b>
+                  <small class="tag" x-show="match.practice" x-text="practiceOutcome(match)"></small>
                   <time class="fine" :datetime="match.finishedAt" x-text="matchDate(match)"></time>
                 </div>
                 <span class="row-actions">
@@ -312,6 +316,7 @@
     <section id="game" hidden>
       <div class="game-bar">
         <button id="leave" type="button" class="ghost"></button>
+        <button id="practice-back" type="button" class="ghost" hidden></button>
       </div>
       <details id="invite">
         <summary data-i18n="inviteOpponent"></summary>
@@ -341,6 +346,7 @@
               <div id="board">
                 <svg id="map" aria-hidden="true"></svg>
                 <div id="cells" role="group" data-i18n-aria-label="boardCells"></div>
+                <div id="gate-orders"></div>
               </div>
               <div id="board-rows" class="board-axis"></div>
               <div id="board-columns" class="board-axis"></div>
@@ -352,6 +358,10 @@
         </div>
         <p id="hint" aria-live="polite"></p>
       </div>
+      <section id="wave-history" aria-labelledby="wave-history-title" hidden>
+        <h2 id="wave-history-title" data-i18n="waveHistory"></h2>
+        <div id="wave-history-entries"></div>
+      </section>
       <section id="planning" data-i18n-aria-label="waveOrders" hidden>
         <small data-i18n="waveOrders"></small>
         <div id="actions" role="group" data-i18n-aria-label="orderType"></div>

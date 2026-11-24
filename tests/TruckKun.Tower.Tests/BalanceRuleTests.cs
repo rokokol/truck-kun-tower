@@ -10,6 +10,19 @@ public sealed class BalanceRuleTests {
     static readonly int[] Road = [64, 65, 66, 67, 52, 53, 54, 69, 84, 83, 82];
 
     [Fact]
+    public void Carrier_becomes_affordable_on_wave_two() {
+        var duel = new Duel();
+        Assert.True(duel.TryTake(new(null, null), Duel.Defender, out _));
+        Assert.True(duel.TryTake(new(null, null), Duel.Attacker, out _));
+        var cell = duel.ObservePlanning(Duel.Attacker).Routes[0][0][0];
+        Assert.NotNull(duel.Apply(Duel.Attacker, new(1, "apc", cell)));
+        Assert.Null(duel.Apply(Duel.Defender, new(1, "ready", null)));
+        Assert.Null(duel.Apply(Duel.Attacker, new(1, "ready", null)));
+        Assert.Null(duel.Apply(Duel.Attacker, new(2, "apc", cell)));
+        Assert.Equal(0, duel.ObservePlanning(Duel.Attacker).Gold);
+    }
+
+    [Fact]
     public void A_mine_costs_three_and_the_keep_holds_ten_hearts() {
         var board = Board.Open(Road);
 
@@ -164,8 +177,8 @@ public sealed class BalanceRuleTests {
     }
 
     [Theory]
-    [InlineData("bolt", 4)]
-    [InlineData("cannon", 6)]
+    [InlineData("bolt", 6)]
+    [InlineData("cannon", 7)]
     public void Towers_fire_at_the_expected_intervals(string type, int ticks) {
         Assert.Equal(ticks, ShotInterval(type));
 

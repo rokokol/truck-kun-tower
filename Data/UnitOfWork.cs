@@ -44,7 +44,6 @@ public interface IRoomRepository {
 public interface IMatchRepository {
     Task<MatchRow?> ByIdAsync(Guid id, CancellationToken token = default);
     Task<Dictionary<string, Guid?>> LatestReplayIdsAsync(Guid user, string[] roomIds, CancellationToken token = default);
-    Task<string?> ReplayMapAsync(Guid id, CancellationToken token = default);
     Task<string?> ReplayWaveAsync(Guid id, int wave, CancellationToken token = default);
     Task<List<WaveDto>> WavesAsync(Guid id, CancellationToken token = default);
     Task<List<MatchRow>> RecentAsync(int take, CancellationToken token = default);
@@ -162,6 +161,7 @@ sealed class RoomRepository(DuelDb db) : Repository<Room>(db), IRoomRepository {
 }
 
 sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchRepository {
+    IQueryable<MatchRow> Competitive => Set.Where(match => !match.Practice);
     public Task<MatchRow?> ByIdAsync(Guid id, CancellationToken token = default) =>
         Set.FirstOrDefaultAsync(match => match.Id == id, token);
 
@@ -174,9 +174,6 @@ sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchReposi
                 .Select(match => (Guid?)match.Id).FirstOrDefault()
         }).ToDictionaryAsync(row => row.Id, row => row.ReplayId, token);
 
-    public Task<string?> ReplayMapAsync(Guid id, CancellationToken token = default) =>
-        Set.Where(match => match.Id == id).Select(match => match.ReplayMapJson).FirstOrDefaultAsync(token);
-
     public Task<string?> ReplayWaveAsync(Guid id, int wave, CancellationToken token = default) =>
         Db.Waves.Where(row => row.MatchId == id && row.Number == wave)
             .Select(row => row.ReplayJson).FirstOrDefaultAsync(token);
@@ -187,7 +184,7 @@ sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchReposi
             .ToListAsync(token);
 
     public async Task<List<MatchRow>> RecentAsync(int take, CancellationToken token = default) =>
-        await Set.AsNoTracking().OrderByDescending(match => match.FinishedAt).Take(take).ToListAsync(token);
+        await Competitive.AsNoTracking().OrderByDescending(match => match.FinishedAt).Take(take).ToListAsync(token);
 
     public async Task<List<MatchRow>> ForUserAsync(Guid userId, int take, CancellationToken token = default, int skip = 0) =>
         await Set.AsNoTracking()
@@ -195,15 +192,15 @@ sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchReposi
             .OrderByDescending(match => match.FinishedAt).ThenByDescending(match => match.Id).Skip(skip).Take(take).ToListAsync(token);
 
     public async Task<MatchStats> StatsAsync(CancellationToken token = default) {
-        var total = await Set.CountAsync(token);
-        var sides = await Set.GroupBy(match => match.Winner)
+        var total = await Competitive.CountAsync(token);
+        var sides = await Competitive.GroupBy(match => match.Winner)
             .Select(group => new { side = group.Key, wins = group.Count() })
             .OrderByDescending(row => row.wins).ToListAsync(token);
-        var settled = Set.Where(match => match.FinishedAt != default);
+        var settled = Competitive.Where(match => match.FinishedAt != default);
         var averageWaves = total == 0 ? 0 : await settled.AverageAsync(match => (double)match.WavesPlayed, token);
         var averageHearts = total == 0 ? 0 : await settled.AverageAsync(match => (double)match.HeartsLeft, token);
         var standing = await settled.CountAsync(match => match.Survivor, token);
-        var waves = await Db.Waves.GroupBy(wave => wave.Number)
+        var waves = await Db.Waves.Where(wave => !wave.Match!.Practice).GroupBy(wave => wave.Number)
             .Select(group => new {
                 wave = group.Key,
                 damage = group.Sum(wave => wave.Damage),
@@ -216,14 +213,14 @@ sealed class MatchRepository(DuelDb db) : Repository<MatchRow>(db), IMatchReposi
     }
 
     public async Task<List<LeaderRow>> LeaderboardAsync(int take, CancellationToken token = default) {
-        var asDefender = await Set.Where(match => match.DefenderId != null)
+        var asDefender = await Competitive.Where(match => match.DefenderId != null)
             .GroupBy(match => match.DefenderId!.Value)
             .Select(group => new {
                 userId = group.Key,
                 played = group.Count(),
                 wins = group.Count(match => match.Winner == "Defender")
             }).ToListAsync(token);
-        var asAttacker = await Set.Where(match => match.AttackerId != null)
+        var asAttacker = await Competitive.Where(match => match.AttackerId != null)
             .GroupBy(match => match.AttackerId!.Value)
             .Select(group => new {
                 userId = group.Key,

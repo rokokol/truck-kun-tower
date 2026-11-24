@@ -61,6 +61,69 @@ assert.ok(renamed.nickname.endsWith('-x'), 'the profile keeps a new nickname');
 await call('/api/users/me', { method: 'PUT', token: anna.token, body: { nickname: anna.nickname } });
 pass('a nickname is unique in any case, a password is checked and a profile can change');
 
+{
+  const own = {token: anna.token};
+  const other = {token: boris.token};
+  const duel = await post('/api/duels', {side: 'defender', practice: true}, {...own, expect: 201});
+  const url = `/api/duels/${duel.id}`;
+  const before = await stateOf(duel.id, own);
+  assert.equal(before.deadline, null);
+  assert.equal(before.canSwap, true);
+  const card = (await call('/api/duels?take=1', own))[0];
+  assert.equal(card.id, duel.id);
+  assert.equal(card.practice, true);
+  assert.equal(card.mySide, 'defender');
+  assert.ok(!(await call('/api/duels', other)).some(item => item.id === duel.id));
+  await call(url + '/join', {method: 'POST', body: {side: 'attacker'}, ...other, expect: 409});
+  const swapped = await post(url + '/swap', {}, own);
+  assert.equal(swapped.side, 'attacker');
+  assert.equal(swapped.swap, null);
+  assert.deepEqual(swapped.paths, before.paths);
+  assert.equal((await call('/api/duels?take=1', own))[0].mySide, 'attacker');
+  await post(url + '/moves', {wave: 1, action: 'ready', cell: null, matchId: before.matchId}, {...own, expect: 409});
+  const resolved = await act(duel.id, own, 1, 'ready', null);
+  let state = resolved;
+  for (let i = 0; i < 40 && state.last === 0; i++) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    state = await stateOf(duel.id, own);
+  }
+  assert.equal(state.last, 1);
+  assert.equal(state.canSwap, false);
+  const statsBefore = await call('/api/stats');
+  const leadersBefore = await call('/api/leaderboard');
+  while (!state.done) {
+    const wave = state.last + 1;
+    state = await act(duel.id, own, wave, 'ready', null);
+    for (let i = 0; i < 40 && state.last < wave; i++) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      state = await stateOf(duel.id, own);
+    }
+    assert.equal(state.last, wave);
+  }
+  assert.equal(state.practiceReplay, true);
+  assert.equal(state.hp, state.maxHp);
+  const mine = (await call('/api/matches/mine', own)).find(match => match.id === state.matchId);
+  assert.equal(mine?.practice, true);
+  assert.equal(mine.winner, 'Defender');
+  assert.equal(mine.hasReplay, true);
+  assert.ok(!(await call('/api/matches/mine', other)).some(match => match.id === mine.id));
+  assert.ok(!(await call('/api/matches')).some(match => match.id === mine.id));
+  assert.deepEqual(await call('/api/stats'), statsBefore);
+  assert.deepEqual(await call('/api/leaderboard'), leadersBefore);
+  await call(url, {method: 'DELETE', ...own, expect: 204});
+  assert.ok(!(await call('/api/duels', own)).some(item => item.id === duel.id));
+  const record = `/api/matches/${mine.id}`;
+  assert.equal((await call(record, own)).practice, true);
+  assert.equal((await call(`${record}/replay`, own)).waveCount, state.last);
+  assert.deepEqual((await call(`${record}/replay/${state.last}`, own)).frames, state.frames);
+  for (const outsider of [{}, other]) {
+    await call(record, {...outsider, expect: 404});
+    await call(`${record}/replay`, {...outsider, expect: 404});
+    await call(`${record}/replay/${state.last}`, {...outsider, expect: 404});
+  }
+  pass('practice can resume, swap seats, and archive a private replay outside the leaderboard');
+}
+
 // ── friends ─────────────────────────────────────────────────────────────────
 await post('/api/friends/requests', { nickname: boris.nickname }, { token: anna.token, expect: 201 });
 await call('/api/friends/requests', { method: 'POST', body: { nickname: anna.nickname }, token: anna.token, expect: 400 });
@@ -188,9 +251,24 @@ pass('sides change only when the opponent agrees');
   assert.equal((await stateOf(id, A)).orders.length, 0);
   while (bought.gold >= attacks.prices.swarm) bought = await act(id, B, 1, 'swarm', entrances[1]);
   await act(id, B, 1, 'swarm', entrances[1], false);
-  assert.equal((await act(id, A, 1, 'ready', -1)).last, 0);
-  assert.equal((await act(id, B, 1, 'ready', -1)).last, 1);
+  const locked = await act(id, A, 1, 'ready', -1);
+  assert.equal(locked.last, 0);
+  assert.deepEqual(locked.waveHistory, []);
+  assert.deepEqual((await stateOf(id, B)).waveHistory, []);
+  const resolved = await act(id, B, 1, 'ready', -1);
+  assert.equal(resolved.last, 1);
   const wave = await stateOf(id, A);
+  assert.deepEqual(wave.waveHistory, resolved.waveHistory);
+  const [summary] = wave.waveHistory;
+  assert.equal(summary.wave, 1);
+  assert.deepEqual(summary.added, [{type: 'bolt', cell: wall}]);
+  assert.deepEqual(summary.removed, []);
+  assert.deepEqual(summary.lost, []);
+  assert.equal(summary.attack.length, 2);
+  for (const {type, cell, count} of summary.attack) {
+    assert.equal(type, 'swarm');
+    assert.equal(count, bought.orders.filter(order => order.cell === cell).length);
+  }
   assert.ok(wave.frames.some(f => f.mobs.length));
   assert.equal(wave.frames.at(-1).hp, wave.hp);
   await act(id, B, 1, 'swarm', entrances[0], false);
@@ -203,12 +281,14 @@ pass('sides change only when the opponent agrees');
   const view2 = await stateOf(id2, B2);
   const gate = view2.paths[0][0];
   await act(id2, B2, 1, 'swarm', gate);
-  await act(id2, B2, 1, 'swarm', gate);
+  const planned = await act(id2, B2, 1, 'swarm', gate);
+  assert.deepEqual(planned.orders, [{type: 'swarm', cell: gate, count: 5}, {type: 'swarm', cell: gate, count: 5}]);
   await act(id2, A2, 1, 'ready', -1);
   const queued = await act(id2, B2, 1, 'ready', -1);
   const atGate = queued.frames.map(f => f.mobs.filter(m => m.y * width + m.x === gate).length);
   assert.equal(Math.max(...atGate), 1, 'Only one slime leaves the same gate at a time');
-  assert.equal(queued.hp, view2.hp - 10, 'Both groups reach the undefended keep');
+  assert.equal(queued.hp, view2.hp - planned.orders.reduce((total, order) => total + order.count, 0),
+    'Every slime in the preview reaches the undefended keep');
   pass('two groups from the same gate arrive one after another');
 
   // 48 fresh maps, then the rooms are cancelled
@@ -290,9 +370,12 @@ pass('sides change only when the opponent agrees');
   const raid = await post(`/api/duels/${id}/join`, { side: 'attacker' });
   const before = await stateOf(id, guest(host));
   assert.ok(before.secondsLeft >= 59 && before.secondsLeft <= 60, 'the clock starts at one minute');
-  await act(id, guest(raid), 1, 'apc', before.paths[0][0]);
+  await act(id, guest(raid), 1, 'apc', before.paths[0][0], false);
   await act(id, guest(host), 1, 'ready');
-  const after = await act(id, guest(raid), 1, 'ready');
+  await act(id, guest(raid), 1, 'ready');
+  await act(id, guest(raid), 2, 'apc', before.paths[0][0]);
+  await act(id, guest(host), 2, 'ready');
+  const after = await act(id, guest(raid), 2, 'ready');
   const deployment = after.frames.findIndex(f => f.mobs.some(m => m.kind === 'balaclava'));
   assert.ok(deployment >= 20, 'the transport moves at most once per four ticks');
   const position = m => m.y * before.width + m.x;

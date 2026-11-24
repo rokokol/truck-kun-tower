@@ -1,0 +1,12 @@
+# LOCAL OWNER/REPO PATH COMMIT BLOB [manual]
+# See references/bump-cascade.md in https://github.com/rokokol/ci-skill
+vendor-sync.sh rokokol/ci-skill templates/vendor-sync.sh f68f1e45aa90fb95aab8bb2f94cfc07b06a712b5 1095262478484520267758a24b7ea9e057ca5204
+check-pins.sh rokokol/ci-skill templates/check-pins.sh f68f1e45aa90fb95aab8bb2f94cfc07b06a712b5 c86f8288606d532f7982206eea8e8a310315d7f6
+.github/workflows/vendor-sync.yml rokokol/ci-skill templates/github/workflows/vendor-sync.yml f68f1e45aa90fb95aab8bb2f94cfc07b06a712b5 a5bde77f98d55a43b2c993f4c96a952e0b68010d manual
+wwwroot/vendor/ddlc/LICENSE rokokol/ddlc-themes LICENSE 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 dee59a826a45bdb5314119fbcde644c76d36508f
+wwwroot/vendor/ddlc/ddlc-ui.css rokokol/ddlc-themes dist/ddlc-ui.css 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 a454d30941a8d4de4bb0086b046ef618fa14c042
+wwwroot/vendor/ddlc/ddlc-theme.js rokokol/ddlc-themes dist/ddlc-theme.js 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 12ec9eda878a5794061bb7bd21d71dd4feddd045
+wwwroot/vendor/ddlc/MyaNunito.woff2 rokokol/ddlc-themes dist/MyaNunito.woff2 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 9cafbdfdf5f6c478a63083c683264b9fa3b20288
+wwwroot/vendor/ddlc/MyaNunito-LICENSE.txt rokokol/ddlc-themes dist/MyaNunito-LICENSE.txt 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 61526872c23ea450f97a6e9701cf9ff479ca095f
+wwwroot/vendor/ddlc/DepartureMono-Regular.woff2 rokokol/ddlc-themes dist/DepartureMono-Regular.woff2 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 b4a23dc1dad1c934005d0862e62c0294636afb08
+wwwroot/vendor/ddlc/DepartureMono-LICENSE.txt rokokol/ddlc-themes dist/DepartureMono-LICENSE.txt 2e1dde21dd1570110b6a82009e0c2399ee9bbf65 de52476183807bbfc04e8ae7bced1dc9cbcbfd2f

@@ -1,0 +1,43 @@
+---
+name: Deliver image
+on:
+  workflow_run:
+    workflows: [Build]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tower-image
+          path: ${{ runner.temp }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the verified image by commit ID
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          docker load -i "$RUNNER_TEMP/tower.tar.gz"
+          revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' tower-ci)
+          test "$revision" = "$TESTED_SHA"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$TESTED_SHA"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag tower-ci "$image"
+          docker push "$image"

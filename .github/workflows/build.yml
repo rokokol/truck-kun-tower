@@ -1,0 +1,87 @@
+---
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      db:
+        image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+        env:
+          POSTGRES_DB: tower
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d tower"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Check tool pins and vendored files
+        run: |
+          ./check-pins.sh
+          ./vendor-sync.sh check
+          ignored=$(git ls-files -ci --exclude-standard)
+          if [ -n "$ignored" ]; then printf 'Tracked paths match ignore rules:\n%s\n' "$ignored" >&2; exit 1; fi
+      - name: Run server tests
+        run: |
+          sdk=$(awk '$1 == "FROM" && $NF == "build" {print $2}' Dockerfile)
+          test -n "$sdk"
+          docker run --rm -v "$PWD:/src:ro" -w /src "$sdk" \
+            dotnet test tests/TruckKun.Tower.Tests -c Release -p:ArtifactsPath=/tmp/artifacts
+      - name: Build the game image
+        run: docker build --network=host --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t tower-ci .
+      - name: Check the API and browser
+        env:
+          PG_PORT: ${{ job.services.db.ports['5432'] }}
+          BROWSER_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+        run: |
+          app=$(docker run -d --network=host -e ASPNETCORE_URLS=http://127.0.0.1:5184 \
+            -e "ConnectionStrings__Default=Host=127.0.0.1;Port=$PG_PORT;Database=tower;Username=postgres;Password=ci-only" \
+            -e Jwt__Key=ci-only-signing-key-not-for-deployment -e Logging__LogLevel__Default=Warning tower-ci)
+          trap 'docker logs --tail 40 "$app"; docker rm -f "$app" >/dev/null' EXIT
+          url=http://127.0.0.1:5184
+          for attempt in $(seq 1 50); do
+            if curl -fsS "$url/api/rules" >/dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
+          curl -fsS "$url/api/rules" >/dev/null
+          docker run --rm --init --ipc=host --network=host -v "$PWD:/src:ro" -w /src -e "URL=$url" \
+            "$BROWSER_IMAGE" bash -euo pipefail -c '
+              cp .github/ui/package*.json /tmp/
+              npm ci --prefix /tmp --ignore-scripts --no-audit --no-fund
+              export PLAYWRIGHT_CORE=/tmp/node_modules/playwright-core
+              CHROMIUM=$(node -p "require(process.env.PLAYWRIGHT_CORE).chromium.executablePath()")
+              export CHROMIUM
+              test -x "$CHROMIUM"
+              node check.mjs
+              for test in tests/ui-*.mjs; do node "$test"; done
+            '
+      - name: Pack the verified image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save tower-ci | gzip -1 > "$RUNNER_TEMP/tower.tar.gz"
+        shell: bash
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: tower-image
+          path: ${{ runner.temp }}/tower.tar.gz
+          compression-level: 0
+          retention-days: 1

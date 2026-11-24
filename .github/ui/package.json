@@ -1,0 +1,5 @@
+{
+  "name": "truck-kun-tower-ui-tests",
+  "private": true,
+  "devDependencies": {"playwright-core": "1.62.1"}
+}

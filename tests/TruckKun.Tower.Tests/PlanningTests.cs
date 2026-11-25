@@ -46,7 +46,7 @@ public sealed class PlanningTests {
         CheckGold();
 
         void CheckGold() {
-            Assert.Equal(11, View(game, Duel.Defender).GetProperty("gold").GetInt32());
+            Assert.Equal(14, View(game, Duel.Defender).GetProperty("gold").GetInt32());
             Assert.Equal(12, View(game, Duel.Attacker).GetProperty("gold").GetInt32());
         }
     }

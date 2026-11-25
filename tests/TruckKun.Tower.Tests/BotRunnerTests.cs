@@ -66,9 +66,14 @@ public sealed class BotRunnerTests {
         var humanGold = Gold(board.Game, board.HumanSeat);
         BotRunner.TurnResult report;
         lock (board.Game) {
+            // The defender can afford a ranged slime unless some of the budget is already spent
+            if (board.BotSeat == Duel.Defender) {
+                var spend = board.Game.ObservePlanning(Duel.Defender).Purchases.First(move => move.Action == "bolt");
+                Assert.Null(board.Game.Apply(Duel.Defender, spend));
+            }
             report = BotRunner.Turn(board.Game, board.BotSeat, (view, _, _) => {
                 Assert.NotEmpty(view.Purchases);
-                Assert.True(Duel.PriceOf("ranged") > view.Gold);
+                Assert.True(Duel.PriceOf("ranged") > view.Gold, $"ranged {Duel.PriceOf("ranged")} against {view.Gold}");
                 return new Move(view.Wave, "ranged", view.Purchases[0].Cell);
             });
         }
@@ -77,7 +82,8 @@ public sealed class BotRunnerTests {
         Assert.Empty(report.Purchases);
         Assert.False(report.ReadyRefused);
         Assert.False(BotPending(board));
-        Assert.Equal(gold, Gold(board.Game, board.BotSeat));
+        var spent = board.BotSeat == Duel.Defender ? 5 : 0;
+        Assert.Equal(gold - spent, Gold(board.Game, board.BotSeat));
         AssertHumanUntouched(board, humanGold);
     }
 

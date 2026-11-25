@@ -16,7 +16,7 @@ public sealed class DefenseEditorTests {
             && cell == bolt.Cell ? 1 : 0, 5);
         Assert.Single(edits);
         var after = game.ObservePlanning(Duel.Defender);
-        Assert.Equal(1, after.Gold);
+        Assert.Equal(4, after.Gold);
         Assert.Contains(after.Buildings, b => b.Cell == bolt.Cell && b.Type == "pulse");
         Assert.Empty(game.ObservePlanning(Duel.Attacker).Buildings);
     }

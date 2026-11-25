@@ -19,12 +19,12 @@ public sealed class Duel {
     const int StructureShotDamage = 4, KeepShotDamage = 1;
     const int RuneTargets = 3;
     static readonly int[] AttackerBonusPerSurvivor = [0, 1, 1, 2, 0];
-    static readonly int[] DefenderBudget = [11, 12, 14, 16, 18], AttackerBudget = [12, 13, 16, 20, 25];
+    static readonly int[] DefenderBudget = [14, 14, 16, 18, 20], AttackerBudget = [12, 13, 16, 20, 25];
     static readonly ImmutableDictionary<string, int[]> AttackRows = new Dictionary<string, int[]> {
-        ["bolt"] = Zone(3), ["cannon"] = Zone(2), ["pulse"] = Zone(2), ["frost"] = Zone(1),
+        ["bolt"] = Zone(3), ["cannon"] = Zone(3), ["pulse"] = Zone(3), ["frost"] = Zone(2),
         ["ranged"] = Zone(2)
     }.ToImmutableDictionary();
-    static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 8, Frost: 6, Spikes: 3, Mine: 3,
+    static readonly PriceList Prices = new(Bolt: 5, Pulse: 6, Cannon: 7, Frost: 5, Spikes: 3, Mine: 3,
         Swarm: 4, Giant: 7, Runner: 3, Armored: 8, Ranged: 14, Apc: 13, Fence: 4);
     readonly record struct PriceList(int Bolt, int Pulse, int Cannon, int Frost, int Spikes, int Mine,
         int Swarm, int Giant, int Runner, int Armored, int Ranged, int Apc, int Fence) {
@@ -599,7 +599,8 @@ public sealed class Duel {
         int facing = 1;
         int nextStep;
         int stepRemainder = StepScale - 1;
-        bool frozen;
+        int frozenTicks;
+        const int FrostHold = 5;
         int lastFrozenAt = -1;
         bool stoppedByFence;
         int released;
@@ -667,10 +668,11 @@ public sealed class Duel {
             // Without this guard, a frost tower can freeze the same slime again before it moves.
             if (lastFrozenAt == index) return false;
             lastFrozenAt = index;
-            return frozen = true;
+            frozenTicks = FrostHold;
+            return true;
         }
-        public bool Frozen => frozen;
-        public void Damage(int amount) => Health -= EffectiveDamage(Kind, amount);
+        public bool Frozen => frozenTicks > 0;
+        public void Damage(int amount, bool pierceArmour = false) => Health -= EffectiveDamage(Kind, amount, pierceArmour);
 
         bool InSiegeReach(int cell) => InZone(AttackRows["ranged"], cell % Maze.Width - X, cell / Maze.Width - Y);
         int SiegeDistance(int cell) => Math.Max(Math.Abs(cell % Maze.Width - X), Math.Abs(cell / Maze.Width - Y));
@@ -727,15 +729,15 @@ public sealed class Duel {
             if (tick < nextStep) return false;
             if (repeatMelee) nextStep = tick + ArmoredMeleeInterval;
             else ScheduleStep(tick);
-            // A frozen slime loses one whole step, which is what the ice on the board shows
-            if (frozen) {
-                frozen = false;
-                return false;
-            }
             return true;
         }
 
         public bool Advance(int tick, Dictionary<int, int> fences, ImmutableArray<SiegeShot>.Builder siege) {
+            // Ice holds a unit for a fixed number of ticks: a fast unit loses more ground than a slow one
+            if (frozenTicks > 0) {
+                frozenTicks--;
+                return false;
+            }
             if (Remaining == 0 || Unloading || tick < nextStep) return false;
             int nextCell = path[index + 1];
             bool blockedByFence = fences.TryGetValue(nextCell, out int health);
@@ -772,8 +774,9 @@ public sealed class Duel {
 
     static int ContactDamage(string kind) => kind switch { "giant" => 3, "balaclava" => 2, "apc" => 0, _ => 1 };
     const int ArmoredStructureDamage = 2, ArmoredMeleeInterval = 2;
-    internal static int EffectiveDamage(string kind, int amount) =>
-        kind == "armored" ? Math.Max(1, amount / 2) : amount;
+    // The cannon is the answer to armour: it alone lands full damage on an armoured slime
+    internal static int EffectiveDamage(string kind, int amount, bool pierceArmour = false) =>
+        kind == "armored" && !pierceArmour ? Math.Max(1, amount / 2) : amount;
 
     internal static int FenceDamage(string kind) => kind switch { "giant" => 3, "armored" => ArmoredStructureDamage, _ => 1 };
     internal static double MoveTicks(string kind) => (double)StepDuration(kind) / StepScale;
@@ -938,7 +941,7 @@ public sealed class Duel {
                 // A hit lands at once in the simulation, so the shot names the slime's own cell: the
                 // board marks the target with a line, and no projectile has to chase a moving sprite
                 void Strike(Slime mob, int amount) {
-                    mob.Damage(amount);
+                    mob.Damage(amount, pierceArmour: tower.Type == "cannon");
                     shots.Add(new(tower.Cell, mob.X, mob.Y));
                 }
 

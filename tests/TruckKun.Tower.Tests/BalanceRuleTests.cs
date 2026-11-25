@@ -162,10 +162,10 @@ public sealed class BalanceRuleTests {
     }
 
     [Fact]
-    public void Shooting_zones_round_large_corners_and_the_bolt_reaches_farther_than_the_cannon() {
+    public void Shooting_zones_round_large_corners_and_frost_is_the_shortest() {
         var board = Board.Open([64, 65, 66, 67, 68, 69, 70, 71]);
-        Assert.Equal(new[] { 1, 1, 1 }, board.Range("frost"));
-        Assert.Equal(new[] { 1, 2, 2, 2, 1 }, board.Range("cannon"));
+        Assert.Equal(new[] { 1, 2, 2, 2, 1 }, board.Range("frost"));
+        Assert.Equal(new[] { 1, 2, 3, 3, 3, 2, 1 }, board.Range("cannon"));
         Assert.Equal(new[] { 1, 2, 3, 3, 3, 2, 1 }, board.Range("bolt"));
         int bolt = 67 - Maze.Width, cannon = 67 + Maze.Width;
         board.Build("bolt", bolt);
@@ -173,7 +173,7 @@ public sealed class BalanceRuleTests {
         board.Order("giant");
         var shots = board.Play()[0].Shots;
         Assert.Contains(shots, shot => shot.Cell == bolt && shot.TargetCell == 64);
-        Assert.DoesNotContain(shots, shot => shot.Cell == cannon);
+        Assert.Contains(shots, shot => shot.Cell == cannon);
     }
 
     [Theory]
@@ -220,7 +220,7 @@ public sealed class BalanceRuleTests {
     [Fact]
     public void Unspent_gold_is_replaced_by_the_next_wave_budget() {
         var board = Board.Open(Road);
-        foreach (var (defender, attacker) in new[] { (12, 13), (14, 16), (16, 20), (18, 25) }) {
+        foreach (var (defender, attacker) in new[] { (14, 13), (16, 16), (18, 20), (20, 25) }) {
             board.Play();
             Assert.Equal(defender, board.Gold(Duel.Defender));
             Assert.Equal(attacker, board.Gold(Duel.Attacker));

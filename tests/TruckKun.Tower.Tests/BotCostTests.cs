@@ -29,7 +29,8 @@ public sealed class BotCostTests {
     public void Shipped_weights_load_and_fit_the_network(int side) {
         var weights = Weights(side);
         Assert.NotEmpty(weights);
-        Assert.True(weights.Length == BotBrain.LegacyLength || weights.Length == BotBrain.Length,
+        Assert.True(weights.Length == BotBrain.LegacyLength || weights.Length == BotBrain.UnshapedLength ||
+            weights.Length == BotBrain.Length,
             $"The shipped weights have {weights.Length} values and fit neither network size");
     }
 

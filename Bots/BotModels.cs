@@ -15,7 +15,8 @@ internal static class BotModels {
         var loaded = JsonSerializer.Deserialize<Pack>(stream, new JsonSerializerOptions(JsonSerializerDefaults.Web))
             ?? throw new InvalidOperationException("Bot weights are unreadable");
         foreach (var weights in new[] { loaded.Attack, loaded.Defense })
-            if (weights.Length != BotBrain.LegacyLength && weights.Length != BotBrain.Length)
+            if (weights.Length != BotBrain.LegacyLength && weights.Length != BotBrain.UnshapedLength &&
+                weights.Length != BotBrain.Length)
                 throw new InvalidOperationException("Bot weights do not fit the network");
         return loaded;
     });

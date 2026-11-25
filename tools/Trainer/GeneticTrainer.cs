@@ -1,8 +1,10 @@
 namespace TruckKun.Tower.Training;
 
-internal sealed record TrainingOptions(int Seed = 73, int Population = 8, int Generations = 20, int Maps = 16, bool Search = false, bool FullPlans = false, bool Hybrid = false, bool Neural = false, bool BothNetworks = false, bool Mixture = false);
+internal sealed record TrainingOptions(int Seed = 73, int Population = 8, int Generations = 20, int Maps = 16, bool Search = false, bool FullPlans = false, bool Hybrid = false, bool Neural = false, bool BothNetworks = false, bool Mixture = false, int PurchaseOuts = 0);
 internal sealed record Score(int AttackWins, int HeartsTaken, int FirstWaveHeartsTaken,
-    SortedDictionary<string, int>? AttackPurchases = null, SortedDictionary<string, int>? DefensePurchases = null, int[][]? ExpertUsesBySeat = null);
+    SortedDictionary<string, int>? AttackPurchases = null, SortedDictionary<string, int>? DefensePurchases = null, int[][]? ExpertUsesBySeat = null,
+    SortedDictionary<string, int>? AttackOpenings = null, SortedDictionary<string, int>? DefenseOpenings = null,
+    EditorActivity? Editor = null);
 internal sealed record Generation(int Number, int[] MapSeeds, int[] BattleSeeds, int PopulationGames, int ArchiveGames,
     Score[][] PopulationScores, Genome Attack, Genome Defense);
 internal sealed record Holdout(int Games, Score BaselinePair, Score EvolvedPair,
@@ -12,7 +14,23 @@ internal sealed record TrainingReport(TrainingOptions Options, string[] Features
 internal sealed record NeuralComparison(string Style, Score Tactical, Score Neural);
 internal sealed record AttackPanelResult(string Style, Score Tactical, Score SinglePurchase, Score FullPlan, Score Hybrid, Score Evolved);
 
-internal static class GeneticTrainer {
+internal sealed record BatchoutCell(int AttackOuts, int DefenseOuts, Score Score);
+internal sealed record BatchoutGrid(TrainingReport[] Runs, int[] MapSeeds, int[] BattleSeeds, BatchoutCell[] Cells);
+
+internal static partial class GeneticTrainer {
+    internal static BatchoutGrid RunBatchoutGrid(TrainingOptions options, int evaluationMaps, Action<int, Generation>? progress = null) {
+        ArgumentOutOfRangeException.ThrowIfLessThan(evaluationMaps, 1);
+        var runs = new TrainingReport[3];
+        Parallel.For(0, runs.Length, outs => runs[outs] = Run(options with { BothNetworks = true, PurchaseOuts = outs },
+            progress is null ? null : generation => progress(outs, generation)));
+        var used = runs.SelectMany(run => run.HoldoutMapSeeds.Concat(run.Generations.SelectMany(g => g.MapSeeds))).ToHashSet();
+        var maps = Scenarios(new Random(0x3C61B7), evaluationMaps, used);
+        var cells = (from attack in runs from defense in runs
+                     select new BatchoutCell(attack.Options.PurchaseOuts, defense.Options.PurchaseOuts,
+                         Play(attack.Generations[^1].Attack, defense.Generations[^1].Defense, maps, trackPurchases: true))).ToArray();
+        return new(runs, maps.Select(map => map.MapSeed).ToArray(), maps.Select(map => map.BattleSeed).ToArray(), cells);
+    }
+
     sealed record Scenario(int MapSeed, Maze Maze, int BattleSeed);
     sealed record Outcome(bool AttackWon, int HeartsTaken, int FirstWaveHeartsTaken);
 
@@ -20,10 +38,12 @@ internal static class GeneticTrainer {
         ArgumentOutOfRangeException.ThrowIfLessThan(options.Population, 3);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.Generations, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.Maps, 1);
+        if (options.PurchaseOuts is < 0 or > 2 || options.PurchaseOuts != 0 && options.FullPlans)
+            throw new ArgumentException("Use zero to two purchase outs and a policy that buys one option at a time", nameof(options));
         var random = new Random(options.Seed);
         var scenarioRandom = new Random(options.Seed ^ 0x62FE885B);
         var used = new HashSet<int>();
-        var holdoutMaps = options.BothNetworks ? Scenarios(new Random(0xA9C31), 96) : Scenarios(scenarioRandom, options.Maps);
+        var holdoutMaps = options.BothNetworks ? Scenarios(new Random(0xA9C31), 96, used) : Scenarios(scenarioRandom, options.Maps, used);
         var baseline = Genome.Baseline();
         var tactical = Genome.Baseline(tactical: true);
         var attack = options.BothNetworks ? Networks() : Start(tactical);
@@ -35,12 +55,13 @@ internal static class GeneticTrainer {
         var history = new List<Generation>();
         var winners = (Attack: baseline, Defense: baseline);
         for (int generation = 1; generation <= options.Generations; generation++) {
-            var scenarios = Scenarios(scenarioRandom, options.Maps);
+            var scenarios = Scenarios(scenarioRandom, options.Maps, used);
             var rivals = archive.Count == 0 ? [(baseline, baseline)] : new[] { (baseline, baseline), archive[^1] };
             if (options.BothNetworks) rivals = [.. rivals, (tactical, tactical)];
-            var scores = attack.Select(a => defense.Select(d => Play(a, d, scenarios)).ToArray()).ToArray();
-            var attackArchive = attack.Select(a => rivals.Select(pair => Play(a, pair.Item2, scenarios)).ToArray()).ToArray();
-            var defenseArchive = defense.Select(d => rivals.Select(pair => Play(pair.Item1, d, scenarios)).ToArray()).ToArray();
+            Score Train(Genome a, Genome d) => Play(a, d, scenarios, purchaseOuts: options.PurchaseOuts);
+            var scores = attack.Select(a => defense.Select(d => Train(a, d)).ToArray()).ToArray();
+            var attackArchive = attack.Select(a => rivals.Select(pair => Train(a, pair.Item2)).ToArray()).ToArray();
+            var defenseArchive = defense.Select(d => rivals.Select(pair => Train(pair.Item1, d)).ToArray()).ToArray();
             var attackParents = Parents(attack, scores.Select((row, i) => row.Concat(attackArchive[i]).ToArray()).ToArray(), true);
             var defenseParents = Parents(defense, defense.Select((_, i) => scores.Select(row => row[i])
                 .Concat(defenseArchive[i]).ToArray()).ToArray(), false);
@@ -78,12 +99,6 @@ internal static class GeneticTrainer {
 
         Genome[] Networks() => Enumerable.Range(0, options.Population).Select(_ => baseline with { Network = NeuralDefense.Create(random), SecondExpert = options.Mixture ? NeuralDefense.Create(random) : null, Router = options.Mixture ? Genome.NewRouter(random) : null }).ToArray();
 
-        Scenario[] Scenarios(Random source, int count) => Enumerable.Range(0, count).Select(_ => {
-            int seed;
-            do seed = source.Next(); while (!used.Add(seed));
-            return new Scenario(seed, new Maze(new Random(seed)), source.Next());
-        }).ToArray();
-
         Genome[] Start(Genome seed) => seed.Search || seed.FullPlan
             ? [baseline, tactical, seed, .. Enumerable.Range(3, options.Population - 3).Select(_ => seed.Mutate(random, 1.8))]
             : [baseline, tactical, .. Enumerable.Range(2, options.Population - 2).Select(_ => seed.Mutate(random, 1.8))];
@@ -91,6 +106,12 @@ internal static class GeneticTrainer {
             .. Enumerable.Range(2, options.Population - 2).Select(i =>
                 (i % 2 == 0 ? parents.Best : parents.Specialist).Mutate(random, 0.9))];
     }
+
+    static Scenario[] Scenarios(Random source, int count, HashSet<int> used) => Enumerable.Range(0, count).Select(_ => {
+        int seed;
+        do seed = source.Next(); while (!used.Add(seed));
+        return new Scenario(seed, new Maze(new Random(seed)), source.Next());
+    }).ToArray();
 
     static (Genome Best, Genome Specialist) Parents(Genome[] candidates, Score[][] scores, bool attack) {
         int Sign(int value) => attack ? value : -value;
@@ -106,30 +127,35 @@ internal static class GeneticTrainer {
     }
 
     static Score Play(Genome attack, Genome defense, Scenario[] maps, bool trackPurchases = false,
-        Func<Duel.PlanningView, Move?>? attackOverride = null) {
+        Func<Duel.PlanningView, Move?>? attackOverride = null, int purchaseOuts = 0, EditorPolicy? editor = null) {
         int wins = 0, damage = 0, opening = 0;
-        var purchases = trackPurchases ? new[] {
-            new SortedDictionary<string, int>(StringComparer.Ordinal),
-            new SortedDictionary<string, int>(StringComparer.Ordinal)
-        } : null;
+        var activity = trackPurchases ? new EditorActivity() : null;
+        var purchases = trackPurchases ? CountsBySide() : null;
+        var openings = trackPurchases ? CountsBySide() : null;
         int[][]? uses = trackPurchases && (attack.Router is not null || defense.Router is not null) ? [[0, 0], [0, 0]] : null;
         foreach (var map in maps) {
-            var result = Match(attack, defense, map, purchases, attackOverride, uses);
+            var result = Match(attack, defense, map, purchases, openings, attackOverride, uses, purchaseOuts, editor, activity);
             if (result.AttackWon) wins++;
             damage += result.HeartsTaken;
             opening += result.FirstWaveHeartsTaken;
         }
-        return new(wins, damage, opening, purchases?[Duel.Attacker], purchases?[Duel.Defender], uses);
+        return new(wins, damage, opening, purchases?[Duel.Attacker], purchases?[Duel.Defender], uses,
+            openings?[Duel.Attacker], openings?[Duel.Defender], activity);
     }
 
+    static SortedDictionary<string, int>[] CountsBySide() => [new(StringComparer.Ordinal), new(StringComparer.Ordinal)];
+
     static Outcome Match(Genome attack, Genome defense, Scenario map, SortedDictionary<string, int>[]? purchases,
-        Func<Duel.PlanningView, Move?>? attackOverride, int[][]? uses) {
+        SortedDictionary<string, int>[]? openings, Func<Duel.PlanningView, Move?>? attackOverride, int[][]? uses, int purchaseOuts,
+        EditorPolicy? editor, EditorActivity? activity) {
         var game = new Duel(map.Maze, map.BattleSeed);
         if (!game.TryTake(new(null, null), Duel.Defender, out _) || !game.TryTake(new(null, null), Duel.Attacker, out _))
             throw new InvalidOperationException("Cannot seat both bots");
         while (!game.Done) {
             int wave = game.ResolvedWaves + 1;
             Plan(defense, Duel.Defender);
+            var edits = editor is null ? [] : DefenseEditor.Refine(game, editor.Weights, editor.Memory);
+            activity?.Add(edits);
             Plan(attack, Duel.Attacker);
             Apply(Duel.Defender, new(wave, "ready", null));
             Apply(Duel.Attacker, new(wave, "ready", null));
@@ -138,20 +164,33 @@ internal static class GeneticTrainer {
         return new(result.HeartsLeft == 0, result.Log.Sum(wave => wave.Damage), result.Log[0].Damage);
 
         void Plan(Genome policy, int side) {
+            var first = game.ObservePlanning(side);
+            var hidden = PurchaseBatchout.HiddenTypes(first, purchaseOuts, map.MapSeed, side);
+            List<Move>? opening = first.Wave == 1 && openings is not null ? [] : null;
             if (side == Duel.Defender && policy.FullPlan) {
-                var plan = DefensePlans.Pick(game.ObservePlanning(side), policy);
+                var plan = DefensePlans.Pick(first, policy);
                 if (plan.Length == 0 && purchases?[side] is { } decisions)
                     decisions["pass"] = decisions.GetValueOrDefault("pass") + 1;
                 foreach (var move in plan) PlayMove(move);
-                return;
+            } else {
+                var view = first;
+                while (Pick(PurchaseBatchout.Apply(view, hidden)) is { } purchase) {
+                    PlayMove(purchase);
+                    view = game.ObservePlanning(side);
+                }
             }
-            while (Pick() is { } purchase) PlayMove(purchase);
+            if (opening is not null) {
+                var counts = openings![side];
+                string key = OpeningKey(opening, side, map.Maze);
+                counts[key] = counts.GetValueOrDefault(key) + 1;
+            }
 
-            Move? Pick() => side == Duel.Attacker && attackOverride is not null
-                ? attackOverride(game.ObservePlanning(side)) : policy.Pick(game.ObservePlanning(side), side, policy.Router is null ? null : uses?[side]);
+            Move? Pick(Duel.PlanningView view) => side == Duel.Attacker && attackOverride is not null
+                ? attackOverride(view) : policy.Pick(view, side, policy.Router is null ? null : uses?[side]);
 
             void PlayMove(Move move) {
                 Apply(side, move);
+                opening?.Add(move);
                 if (purchases?[side] is { } counts && move.Action is { } type)
                     counts[type] = counts.GetValueOrDefault(type) + 1;
             }
@@ -160,4 +199,26 @@ internal static class GeneticTrainer {
             if (game.Apply(side, move) is not null) throw new InvalidOperationException($"Bot move rejected: {move}");
         }
     }
+
+    static string OpeningKey(List<Move> moves, int side, Maze maze) {
+        if (moves.Count == 0) return "pass";
+        if (side == Duel.Defender) return string.Join('+', moves.Select(move => move.Action).Order(StringComparer.Ordinal));
+        var gates = maze.Routes.Keys.Order().ToArray();
+        return string.Join('|', moves.GroupBy(move => move.Cell!.Value).OrderBy(gate => gate.Key)
+            .Select(gate => $"{Array.IndexOf(gates, gate.Key) + 1}:{string.Join('+', gate.Select(move => move.Action))}"));
+    }
+}
+
+internal static class PurchaseBatchout {
+    internal static string[] HiddenTypes(Duel.PlanningView start, int outs, int mapSeed, int side) {
+        if (outs == 0 || start.Purchases.Length == 0) return [];
+        var available = start.Purchases.Select(move => move.Action).ToHashSet(StringComparer.Ordinal);
+        var types = Duel.TrainablePurchases.ToArray();
+        var random = new Random(unchecked(mapSeed * 397 ^ start.Wave * 104729 ^ (side + 1) * 48611));
+        random.Shuffle(types);
+        return types.Where(available.Contains).Take(Math.Min(outs, available.Count - 1)).ToArray();
+    }
+
+    internal static Duel.PlanningView Apply(Duel.PlanningView view, string[] hidden) => hidden.Length == 0 ? view
+        : view with { Purchases = view.Purchases.Where(move => !hidden.Contains(move.Action, StringComparer.Ordinal)).ToArray() };
 }

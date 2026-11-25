@@ -9,7 +9,8 @@ public sealed class Duel {
     static readonly TimeSpan PracticeGrace = TimeSpan.FromMinutes(10);
     static readonly TimeSpan PollWindow = TimeSpan.FromSeconds(12);
     public const int Defender = 0, Attacker = 1;
-    const int WaveCount = 5, ThinkTime = 60;
+    internal const int WaveCount = 5;
+    const int ThinkTime = 60;
     const int ReplayTickMs = 270, ReplayMaxMs = 52000, FightTickLimit = 2048;
     const int CarrierPassengers = 5, SpikeCharges = 5;
     internal const int SpikeDamage = 4;
@@ -270,16 +271,19 @@ public sealed class Duel {
 
     internal sealed record PlanningView(int Wave, int Gold, int Hearts, int[][][] Routes,
         ImmutableArray<BuildingView> Buildings, ImmutableArray<Fence> Fences, int[] OrderedGates, Move[] Purchases,
-        int AttackBudget = 0, ImmutableArray<WaveSummary> WaveHistory = default);
+        int AttackBudget = 0, ImmutableArray<WaveSummary> WaveHistory = default,
+        int NextAttackBase = 0, int NextAttackBonus = 0, ImmutableArray<int> Refundable = default);
 
-    internal PlanningView ObservePlanning(int seat) {
-        Move[] purchases = !Joined || Done || ready[seat] ? [] : LegalPurchases(seat, last + 1);
+    internal PlanningView ObservePlanning(int seat, bool includePurchases = true) {
+        Move[] purchases = !includePurchases || !Joined || Done || ready[seat] ? [] : LegalPurchases(seat, last + 1);
         return new(last + 1, gold[seat], hp, maze.RouteOptions.Values.Select(routes =>
                 routes.Select(path => (int[])path.Clone()).ToArray()).ToArray(),
             seat == Defender ? buildingsNow() : revealedBuildings,
             seat == Defender ? FenceSnapshot() : revealedFences,
             seat == Attacker ? orders.Select(order => order.Cell).ToArray() : [], purchases,
-            Done ? 0 : AttackIncome(last, revealedBuildings.Length + revealedFences.Length), waveHistory);
+            Done ? 0 : AttackIncome(last, revealedBuildings.Length + revealedFences.Length), waveHistory,
+            last + 1 < WaveCount ? AttackerBudget[last + 1] : 0, NextAttackBonusPerSurvivor(last + 1),
+            seat == Defender ? refundableCells.ToImmutableArray() : []);
     }
 
     Move[] LegalPurchases(int seat, int wave) {
@@ -378,9 +382,29 @@ public sealed class Duel {
     internal static PlanningView ProjectDefense(PlanningView defense, Maze terrain, Move purchase) {
         var draft = DefenseSimulation(defense, terrain, seed: 0);
         draft.SimulateDefenseMove(purchase);
-        return defense with { Gold = draft.gold[Defender], Buildings = draft.buildingsNow(),
-            Fences = draft.FenceSnapshot(), Purchases = draft.LegalPurchases(Defender, defense.Wave) };
+        return draft.DefenseProjection(defense, draft.LegalPurchases(Defender, defense.Wave));
     }
+
+    internal static Move[] DefenseReplacementChoices(PlanningView defense, Maze terrain, Move remove) {
+        var draft = DefenseSimulation(defense, terrain, seed: 0);
+        draft.SimulateDefenseMove(remove);
+        int cell = remove.Cell!.Value;
+        var trapSites = draft.TrapCells().ToHashSet();
+        return PurchaseTypes.Where(type => draft.CheckPurchase(Defender, type, cell, trapSites) is null)
+            .Select(type => new Move(defense.Wave, type, cell)).ToArray();
+    }
+
+    internal static PlanningView ProjectDefenseEdit(PlanningView defense, Maze terrain, Move remove, Move? replacement) {
+        var draft = DefenseSimulation(defense, terrain, seed: 0);
+        draft.SimulateDefenseMove(remove);
+        if (replacement is not null) draft.SimulateDefenseMove(replacement);
+        return draft.DefenseProjection(defense, []);
+    }
+
+    PlanningView DefenseProjection(PlanningView original, Move[] purchases) => original with {
+        Gold = gold[Defender], Buildings = buildingsNow(), Fences = FenceSnapshot(),
+        Purchases = purchases, Refundable = refundableCells.ToImmutableArray()
+    };
 
     static Duel DefenseSimulation(PlanningView defense, Maze terrain, int seed) {
         var game = new Duel(terrain, seed) { last = defense.Wave, hp = defense.Hearts };
@@ -388,6 +412,7 @@ public sealed class Duel {
         game.gold[Attacker] = defense.AttackBudget;
         foreach (var tower in defense.Buildings) game.towers.Add(new(tower.Type, tower.Cell, tower.Hp));
         foreach (var fence in defense.Fences) game.fences.Add(fence.Cell, fence.Hp);
+        if (!defense.Refundable.IsDefaultOrEmpty) game.refundableCells.UnionWith(defense.Refundable);
         return game;
     }
 

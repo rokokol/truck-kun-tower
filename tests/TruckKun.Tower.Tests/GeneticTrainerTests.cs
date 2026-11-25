@@ -30,6 +30,53 @@ public sealed class GeneticTrainerTests {
     }
 
     [Fact]
+    public void Batchout_hides_whole_types_and_retains_a_legal_type() {
+        Move[] moves = [new(1, "runner", 1), new(1, "runner", 16), new(1, "giant", 1), new(1, "swarm", 1)];
+        var view = new Duel.PlanningView(1, 12, 10, [], [], [], [], moves);
+        Assert.Empty(PurchaseBatchout.HiddenTypes(view, 0, 73, Duel.Attacker));
+        var one = PurchaseBatchout.HiddenTypes(view, 1, 73, Duel.Attacker);
+        var two = PurchaseBatchout.HiddenTypes(view, 2, 73, Duel.Attacker);
+        Assert.Single(one);
+        Assert.Equal(2, two.Length);
+        Assert.Contains(one[0], two);
+        Assert.Equal(two, PurchaseBatchout.HiddenTypes(view with { Purchases = moves.Reverse().ToArray() }, 2, 73, Duel.Attacker));
+        Assert.Equal(moves.Where(move => !two.Contains(move.Action)), PurchaseBatchout.Apply(view, two).Purchases);
+        Assert.Empty(PurchaseBatchout.HiddenTypes(view with { Purchases = moves[..2] }, 2, 73, Duel.Attacker));
+        var later = view with { Purchases = [moves[1], moves[2]] };
+        Assert.Equal(later.Purchases.Where(move => !two.Contains(move.Action)), PurchaseBatchout.Apply(later, two).Purchases);
+    }
+
+    [Fact]
+    public void Batchout_masks_vary_by_wave_and_side() {
+        Move[] moves = [new(1, "runner", 1), new(1, "giant", 1), new(1, "swarm", 1), new(1, "smart", 1)];
+        var view = new Duel.PlanningView(1, 12, 10, [], [], [], [], moves);
+        var seeds = Enumerable.Range(73, 32);
+        Assert.Contains(seeds, seed => !Hide(view, seed, Duel.Attacker).SequenceEqual(Hide(view, seed, Duel.Defender)));
+        Assert.Contains(seeds, seed => !Hide(view, seed, Duel.Attacker).SequenceEqual(Hide(view with { Wave = 2 }, seed, Duel.Attacker)));
+
+        static string[] Hide(Duel.PlanningView state, int seed, int side) => PurchaseBatchout.HiddenTypes(state, 2, seed, side);
+    }
+
+    [Fact]
+    public void Grid_shares_training_seeds_and_pairs_every_policy_on_fresh_maps() {
+        var grid = GeneticTrainer.RunBatchoutGrid(new(Seed: 73, Population: 3, Generations: 1, Maps: 2), 3);
+        Assert.Equal(new[] { 0, 1, 2 }, grid.Runs.Select(run => run.Options.PurchaseOuts));
+        foreach (var run in grid.Runs) {
+            Assert.Equal(grid.Runs[0].Generations[0].MapSeeds, run.Generations[0].MapSeeds);
+            Assert.Equal(grid.Runs[0].Generations[0].BattleSeeds, run.Generations[0].BattleSeeds);
+            Assert.Empty(grid.MapSeeds.Intersect(run.Generations[0].MapSeeds.Concat(run.HoldoutMapSeeds)));
+        }
+        Assert.Equal(3, grid.MapSeeds.Distinct().Count());
+        Assert.Equal(3, grid.BattleSeeds.Length);
+        Assert.Equal(9, grid.Cells.Select(cell => (cell.AttackOuts, cell.DefenseOuts)).Distinct().Count());
+        Assert.All(grid.Cells, cell => {
+            Assert.InRange(cell.Score.AttackWins, 0, grid.MapSeeds.Length);
+            Assert.Equal(grid.MapSeeds.Length, cell.Score.AttackOpenings!.Values.Sum());
+            Assert.Equal(grid.MapSeeds.Length, cell.Score.DefenseOpenings!.Values.Sum());
+        });
+    }
+
+    [Fact]
     public void Tactical_attack_avoids_a_visible_mine_on_equal_routes() {
         const int hazardous = 15, safe = 1;
         var view = new Duel.PlanningView(2, 4, 10, [[[hazardous, 16, 17]], [[safe, 16, 17]]],
